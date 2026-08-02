@@ -5364,6 +5364,119 @@ void main() {
     expect(await outbox.listDirtyIntents(limit: 10), isEmpty);
   });
 
+  test('E2EE 生成设置仅从 Vault 水合且事务失败恢复 Provider', () async {
+    final initialPayload = _testGenerationSettingsPayload('initial');
+    final harness = await _E2eeConfigBindingHarness.create(
+      initialProfileName: 'Vault 用户',
+      initialGenerationSettingsPayload: initialPayload,
+      initialPreferences: <String, Object>{
+        'selected_model_v1': 'plaintext::model',
+        'title_prompt_v1': '旧明文标题提示词',
+      },
+    );
+    addTearDown(harness.close);
+
+    final settings = harness.providers.settings;
+    expect(settings.currentModelProvider, 'provider-initial');
+    expect(settings.currentModelId, 'current-initial');
+    expect(settings.titlePrompt, 'title-initial');
+
+    await expectLater(
+      harness.binding.runLocalWrite<void>(
+        configKeys: const <SyncEntityKey>[ConfigSyncKeys.generationSettings],
+        transaction: (trackedWrite) {
+          return harness.repository.runInTransaction<void>(() async {
+            await trackedWrite();
+            throw StateError('模拟生成设置事务失败');
+          });
+        },
+        write: () async {
+          await settings.setCurrentModel('provider-draft', 'model-draft');
+          await settings.setTitlePrompt('title-draft');
+        },
+      ),
+      throwsStateError,
+    );
+
+    expect(settings.currentModelProvider, 'provider-initial');
+    expect(settings.currentModelId, 'current-initial');
+    expect(settings.titlePrompt, 'title-initial');
+    expect(await harness.readGenerationSettings(), initialPayload);
+    final preferences = await SharedPreferences.getInstance();
+    expect(preferences.getString('selected_model_v1'), 'plaintext::model');
+    expect(preferences.getString('title_prompt_v1'), '旧明文标题提示词');
+  });
+
+  test('E2EE Vault 缺少生成设置时忽略旧明文并恢复缺省值', () async {
+    final harness = await _E2eeConfigBindingHarness.create(
+      initialProfileName: 'Vault 用户',
+      initialPreferences: <String, Object>{
+        'selected_model_v1': 'plaintext::model',
+        'title_prompt_v1': '旧明文标题提示词',
+      },
+    );
+    addTearDown(harness.close);
+
+    final settings = harness.providers.settings;
+    expect(settings.currentModelKey, isNull);
+    expect(settings.titlePrompt, SettingsProvider.defaultTitlePrompt);
+    expect(
+      await harness.repository.e2eeConfigVaultCommands.read(
+        ConfigSyncKeys.generationSettings,
+      ),
+      isNull,
+    );
+  });
+
+  test('E2EE 生成设置远端更新后可用墓碑恢复缺省值', () async {
+    final harness = await _E2eeConfigBindingHarness.create(
+      initialProfileName: 'Vault 用户',
+      initialGenerationSettingsPayload: _testGenerationSettingsPayload(
+        'initial',
+      ),
+    );
+    addTearDown(harness.close);
+    final remotePayload = _testGenerationSettingsPayload('remote');
+    final remoteChange = await harness.generationSettingsChange(remotePayload);
+
+    await harness.binding.runRemotePull(
+      () => harness.repository.runInTransaction<void>(
+        () => harness.binding.applyTransactional(<E2eeSyncPulledChange>[
+          remoteChange,
+        ]),
+      ),
+    );
+
+    expect(harness.providers.settings.titlePrompt, 'title-remote');
+    expect(await harness.readGenerationSettings(), remotePayload);
+
+    await harness.binding.runRemotePull(
+      () => harness.repository.runInTransaction<void>(
+        () async => harness.binding.applyTransactional(<E2eeSyncPulledChange>[
+          await harness.generationSettingsTombstone(
+            logicalVersion: 2,
+            parentDigest: remoteChange.state.digest,
+          ),
+        ]),
+      ),
+    );
+
+    final settings = harness.providers.settings;
+    expect(settings.currentModelKey, isNull);
+    expect(settings.titleModelKey, isNull);
+    expect(settings.titlePrompt, SettingsProvider.defaultTitlePrompt);
+    expect(
+      settings.learningModePrompt,
+      SettingsProvider.defaultLearningModePrompt,
+    );
+    expect(
+      await harness.repository.e2eeConfigVaultCommands.read(
+        ConfigSyncKeys.generationSettings,
+      ),
+      isNull,
+    );
+  });
+
   test('E2EE 配置桥接从受管资产引用水合助手头像', () async {
     const assistantId = 'assistant-managed-avatar';
     final harness = await _E2eeConfigBindingHarness.create(
@@ -5496,7 +5609,56 @@ void main() {
     await instance.configProviders!.user.setName('配置事务用户');
 
     await _waitUntil(() => instance.records.pushCalls == 1);
-    expect(instance.records.mutationCount, 1);
+    final settings = instance.configProviders!.settings;
+    await settings.setCurrentModel('provider-runtime', 'model-runtime');
+    await settings.setTitlePrompt('运行时标题提示词');
+
+    await _waitUntil(() => instance.records.pushCalls >= 2);
+    final lease = await harness._databaseGateway.acquire(harness._databaseFile);
+    try {
+      final outbox = await lease.repository.acquireE2eeSyncOutboxCommands(
+        now: DateTime.now().toUtc(),
+      );
+      await _waitUntilAsync(
+        () async => (await outbox.listDirtyIntents(limit: 10)).isEmpty,
+      );
+      expect(instance.records.mutationCount, instance.records.pushCalls);
+      final entry = await lease.repository.e2eeConfigVaultCommands.read(
+        ConfigSyncKeys.generationSettings,
+      );
+      expect(entry, isNotNull);
+      expect(
+        E2eeSyncPayloadCodec.decode(
+          entityKey: entry!.key,
+          bytes: entry.payload,
+        ),
+        <String, Object?>{
+          ..._testGenerationSettingsPayload('runtime'),
+          'currentModel': <String, Object?>{
+            'providerId': 'provider-runtime',
+            'modelId': 'model-runtime',
+          },
+          'titleModel': null,
+          'translateModel': null,
+          'ocrModel': null,
+          'summaryModel': null,
+          'suggestionModel': null,
+          'compressModel': null,
+          'titlePrompt': '运行时标题提示词',
+          'translatePrompt': SettingsProvider.defaultTranslatePrompt,
+          'ocrPrompt': SettingsProvider.defaultOcrPrompt,
+          'summaryPrompt': SettingsProvider.defaultSummaryPrompt,
+          'suggestionPrompt': SettingsProvider.defaultSuggestionPrompt,
+          'compressPrompt': SettingsProvider.defaultCompressPrompt,
+          'learningModePrompt': SettingsProvider.defaultLearningModePrompt,
+        },
+      );
+    } finally {
+      await lease.release();
+    }
+    final preferences = await SharedPreferences.getInstance();
+    expect(preferences.getString('selected_model_v1'), isNull);
+    expect(preferences.getString('title_prompt_v1'), isNull);
     await instance.runtime.close();
   });
 
@@ -6186,13 +6348,15 @@ final class _E2eeConfigBindingHarness {
 
   static Future<_E2eeConfigBindingHarness> create({
     required String initialProfileName,
+    Map<String, Object?>? initialGenerationSettingsPayload,
+    Map<String, Object> initialPreferences = const <String, Object>{},
     Assistant? initialAssistant,
     MessageAssetRegistration? assistantAvatarAsset,
     ProviderConfig? initialProvider,
     MessageAssetRegistration? providerAvatarAsset,
     MessageAssetRegistration? profileAvatarAsset,
   }) async {
-    SharedPreferences.setMockInitialValues(<String, Object>{});
+    SharedPreferences.setMockInitialValues(initialPreferences);
     final directory = await Directory.systemTemp.createTemp(
       'kelivo_config_binding_',
     );
@@ -6238,6 +6402,25 @@ final class _E2eeConfigBindingHarness {
         }
       } finally {
         encoded.fillRange(0, encoded.length, 0);
+      }
+      if (initialGenerationSettingsPayload != null) {
+        final encodedGenerationSettings = E2eeSyncPayloadCodec.encode(
+          entityKey: ConfigSyncKeys.generationSettings,
+          payload: initialGenerationSettingsPayload,
+        );
+        try {
+          await repository.e2eeConfigVaultCommands.put(
+            key: ConfigSyncKeys.generationSettings,
+            payload: encodedGenerationSettings,
+            updatedAt: DateTime.utc(2026, 7, 29),
+          );
+        } finally {
+          encodedGenerationSettings.fillRange(
+            0,
+            encodedGenerationSettings.length,
+            0,
+          );
+        }
       }
       if (initialProvider != null) {
         final key = ConfigSyncKeys.provider(initialProvider.id);
@@ -6335,6 +6518,17 @@ final class _E2eeConfigBindingHarness {
         as String;
   }
 
+  Future<Map<String, Object?>> readGenerationSettings() async {
+    final entry = await repository.e2eeConfigVaultCommands.read(
+      ConfigSyncKeys.generationSettings,
+    );
+    if (entry == null) throw StateError('测试配置 Vault 缺少生成设置');
+    return E2eeSyncPayloadCodec.decode(
+      entityKey: entry.key,
+      bytes: entry.payload,
+    );
+  }
+
   Future<E2eeSyncPulledValueChange> profileChange(String name) async {
     const secureCore = KelivoSecureCore();
     final codec = E2eeAccountRecordStateCodec.takeOwnership(
@@ -6382,6 +6576,108 @@ final class _E2eeConfigBindingHarness {
     }
   }
 
+  Future<E2eeSyncPulledValueChange> generationSettingsChange(
+    Map<String, Object?> payload,
+  ) async {
+    const secureCore = KelivoSecureCore();
+    final codec = E2eeAccountRecordStateCodec.takeOwnership(
+      E2eeAccountRecordCipher.takeOwnership(
+        secureCore: secureCore,
+        accountRootKey: await secureCore.generateAccountRootKey(
+          userId: _runtimeUuidBytes(_userId),
+          keyEpoch: 1,
+        ),
+        userId: _userId,
+        currentKeyEpoch: 1,
+      ),
+    );
+    try {
+      final sealed = await codec.sealValue(
+        entityKey: ConfigSyncKeys.generationSettings,
+        logicalVersion: 1,
+        parentDigests: const <E2eeAccountRecordStateDigest>[],
+        operationId: '50000000-0000-4000-8000-000000000002',
+        claimedWriterDeviceId: _otherDeviceId,
+        claimedWriterKeyVersion: 1,
+        payload: Uint8List.fromList(<int>[2]),
+      );
+      final authenticated = await codec.open(
+        E2eeUntrustedAccountRecordEnvelope.fromTransport(
+          recordId: E2eeUntrustedAccountRecordId.fromTransport(
+            sealed.record.recordId.wireValue,
+          ),
+          envelopeVersion: e2eeAccountRecordEnvelopeVersion,
+          keyEpoch: sealed.record.keyEpoch,
+          ciphertext: sealed.record.ciphertext,
+        ),
+        decode: (state, _) => state,
+      );
+      return E2eeSyncPulledValueChange(
+        untrustedServerMetadata: E2eeSyncUntrustedServerMetadata(
+          changeSeq: 2,
+          revision: 1,
+        ),
+        state: authenticated,
+        payload: payload,
+      );
+    } finally {
+      await codec.close();
+    }
+  }
+
+  Future<E2eeSyncPulledTombstoneChange> generationSettingsTombstone({
+    required int logicalVersion,
+    required E2eeAccountRecordStateDigest parentDigest,
+  }) async {
+    const secureCore = KelivoSecureCore();
+    final codec = E2eeAccountRecordStateCodec.takeOwnership(
+      E2eeAccountRecordCipher.takeOwnership(
+        secureCore: secureCore,
+        accountRootKey: await secureCore.generateAccountRootKey(
+          userId: _runtimeUuidBytes(_userId),
+          keyEpoch: 1,
+        ),
+        userId: _userId,
+        currentKeyEpoch: 1,
+      ),
+    );
+    try {
+      final sealed = await codec.sealTombstone(
+        entityKey: ConfigSyncKeys.generationSettings,
+        logicalVersion: logicalVersion,
+        parentDigests: <E2eeAccountRecordStateDigest>[parentDigest],
+        operationId: '50000000-0000-4000-8000-000000000003',
+        claimedWriterDeviceId: _otherDeviceId,
+        claimedWriterKeyVersion: 1,
+      );
+      final authenticated = await codec.open(
+        E2eeUntrustedAccountRecordEnvelope.fromTransport(
+          recordId: E2eeUntrustedAccountRecordId.fromTransport(
+            sealed.record.recordId.wireValue,
+          ),
+          envelopeVersion: e2eeAccountRecordEnvelopeVersion,
+          keyEpoch: sealed.record.keyEpoch,
+          ciphertext: sealed.record.ciphertext,
+        ),
+        decode: (state, borrowedPayload) {
+          if (borrowedPayload.isNotEmpty) {
+            throw StateError('测试墓碑意外携带载荷');
+          }
+          return state;
+        },
+      );
+      return E2eeSyncPulledTombstoneChange(
+        untrustedServerMetadata: E2eeSyncUntrustedServerMetadata(
+          changeSeq: 3,
+          revision: logicalVersion,
+        ),
+        state: authenticated,
+      );
+    } finally {
+      await codec.close();
+    }
+  }
+
   Future<void> close() async {
     providers.dispose();
     await repository.close();
@@ -6395,6 +6691,30 @@ Map<String, Object?> _profilePayload(String name) => <String, Object?>{
   'avatarValue': null,
   'avatarAsset': null,
 };
+
+Map<String, Object?> _testGenerationSettingsPayload(String marker) {
+  Map<String, Object?> model(String kind) => <String, Object?>{
+    'providerId': 'provider-$marker',
+    'modelId': '$kind-$marker',
+  };
+
+  return <String, Object?>{
+    'currentModel': model('current'),
+    'titleModel': model('title'),
+    'titlePrompt': 'title-$marker',
+    'translateModel': model('translate'),
+    'translatePrompt': 'translate-$marker',
+    'ocrModel': model('ocr'),
+    'ocrPrompt': 'ocr-$marker',
+    'summaryModel': model('summary'),
+    'summaryPrompt': 'summary-$marker',
+    'suggestionModel': model('suggestion'),
+    'suggestionPrompt': 'suggestion-$marker',
+    'compressModel': model('compress'),
+    'compressPrompt': 'compress-$marker',
+    'learningModePrompt': 'learning-$marker',
+  };
+}
 
 E2eeConfigAssetRemoteIdentity? _testConfigAssetIdentity(
   MessageAssetRegistration? asset,
@@ -8419,6 +8739,16 @@ final class _ManualTimer implements Timer {
 Future<void> _waitUntil(bool Function() condition) async {
   final deadline = DateTime.now().add(const Duration(seconds: 5));
   while (!condition()) {
+    if (DateTime.now().isAfter(deadline)) {
+      fail('等待异步状态收敛超时');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+}
+
+Future<void> _waitUntilAsync(Future<bool> Function() condition) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 5));
+  while (!await condition()) {
     if (DateTime.now().isAfter(deadline)) {
       fail('等待异步状态收敛超时');
     }

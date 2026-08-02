@@ -770,9 +770,63 @@ void _validatePreference(
         'requestTimeoutSeconds',
       }, 'mcp-state');
       _requiredPositiveInteger(payload, 'requestTimeoutSeconds');
+    case 'generation-settings:default':
+      _validateGenerationSettingsPreference(payload);
     default:
       throw StateError('sync_config_preference_id_unreachable');
   }
+}
+
+void _validateGenerationSettingsPreference(Map<String, Object?> payload) {
+  _expectExactKeys(payload, const <String>{
+    'currentModel',
+    'titleModel',
+    'titlePrompt',
+    'translateModel',
+    'translatePrompt',
+    'ocrModel',
+    'ocrPrompt',
+    'summaryModel',
+    'summaryPrompt',
+    'suggestionModel',
+    'suggestionPrompt',
+    'compressModel',
+    'compressPrompt',
+    'learningModePrompt',
+  }, 'generation-settings');
+  for (final key in const <String>[
+    'currentModel',
+    'titleModel',
+    'translateModel',
+    'ocrModel',
+    'summaryModel',
+    'suggestionModel',
+    'compressModel',
+  ]) {
+    _validateGenerationModelSelection(payload[key], key);
+  }
+  for (final key in const <String>[
+    'titlePrompt',
+    'translatePrompt',
+    'ocrPrompt',
+    'summaryPrompt',
+    'suggestionPrompt',
+    'compressPrompt',
+    'learningModePrompt',
+  ]) {
+    _requiredString(payload, key);
+  }
+}
+
+void _validateGenerationModelSelection(Object? value, String context) {
+  if (value == null) return;
+  final selection = _expectObject(value, 'generation-settings.$context');
+  _expectExactKeys(selection, const <String>{
+    'providerId',
+    'modelId',
+  }, 'generation-settings.$context');
+  _requiredString(selection, 'providerId');
+  _requiredString(selection, 'modelId');
 }
 
 void _validateProfilePreference(Map<String, Object?> payload) {

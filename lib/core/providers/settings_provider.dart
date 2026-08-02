@@ -55,6 +55,50 @@ enum DesktopMessageNavButtonsMode {
 // Mobile: message navigation buttons visibility mode
 enum MobileMessageNavButtonsMode { always, scroll, never }
 
+final class GenerationModelSelection {
+  const GenerationModelSelection({
+    required this.providerId,
+    required this.modelId,
+  });
+
+  final String providerId;
+  final String modelId;
+}
+
+final class GenerationSettingsSnapshot {
+  const GenerationSettingsSnapshot({
+    required this.currentModel,
+    required this.titleModel,
+    required this.titlePrompt,
+    required this.translateModel,
+    required this.translatePrompt,
+    required this.ocrModel,
+    required this.ocrPrompt,
+    required this.summaryModel,
+    required this.summaryPrompt,
+    required this.suggestionModel,
+    required this.suggestionPrompt,
+    required this.compressModel,
+    required this.compressPrompt,
+    required this.learningModePrompt,
+  });
+
+  final GenerationModelSelection? currentModel;
+  final GenerationModelSelection? titleModel;
+  final String titlePrompt;
+  final GenerationModelSelection? translateModel;
+  final String translatePrompt;
+  final GenerationModelSelection? ocrModel;
+  final String ocrPrompt;
+  final GenerationModelSelection? summaryModel;
+  final String summaryPrompt;
+  final GenerationModelSelection? suggestionModel;
+  final String suggestionPrompt;
+  final GenerationModelSelection? compressModel;
+  final String compressPrompt;
+  final String learningModePrompt;
+}
+
 enum _MigrationResult { noChange, applied, failed }
 
 final class _AsyncOperationLock {
@@ -644,6 +688,111 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
     ];
   }
 
+  List<SyncEntityKey> _providerRemovalMutationKeys(String providerId) =>
+      <SyncEntityKey>[
+        ..._providerMutationKeys(providerId),
+        ConfigSyncKeys.generationSettings,
+      ];
+
+  static GenerationSettingsSnapshot get defaultGenerationSettingsSnapshot =>
+      const GenerationSettingsSnapshot(
+        currentModel: null,
+        titleModel: null,
+        titlePrompt: defaultTitlePrompt,
+        translateModel: null,
+        translatePrompt: defaultTranslatePrompt,
+        ocrModel: null,
+        ocrPrompt: defaultOcrPrompt,
+        summaryModel: null,
+        summaryPrompt: defaultSummaryPrompt,
+        suggestionModel: null,
+        suggestionPrompt: defaultSuggestionPrompt,
+        compressModel: null,
+        compressPrompt: defaultCompressPrompt,
+        learningModePrompt: defaultLearningModePrompt,
+      );
+
+  GenerationSettingsSnapshot get generationSettingsSnapshot =>
+      GenerationSettingsSnapshot(
+        currentModel: _generationModelSelection(
+          _currentModelProvider,
+          _currentModelId,
+        ),
+        titleModel: _generationModelSelection(
+          _titleModelProvider,
+          _titleModelId,
+        ),
+        titlePrompt: _titlePrompt,
+        translateModel: _generationModelSelection(
+          _translateModelProvider,
+          _translateModelId,
+        ),
+        translatePrompt: _translatePrompt,
+        ocrModel: _generationModelSelection(_ocrModelProvider, _ocrModelId),
+        ocrPrompt: _ocrPrompt,
+        summaryModel: _generationModelSelection(
+          _summaryModelProvider,
+          _summaryModelId,
+        ),
+        summaryPrompt: _summaryPrompt,
+        suggestionModel: _generationModelSelection(
+          _suggestionModelProvider,
+          _suggestionModelId,
+        ),
+        suggestionPrompt: _suggestionPrompt,
+        compressModel: _generationModelSelection(
+          _compressModelProvider,
+          _compressModelId,
+        ),
+        compressPrompt: _compressPrompt,
+        learningModePrompt: _learningModePrompt,
+      );
+
+  Future<void> syncApplyGenerationSettings(
+    GenerationSettingsSnapshot snapshot,
+  ) async {
+    await ready;
+    await _persistGenerationSettingsSnapshot(snapshot);
+    _publishGenerationSettings(snapshot);
+  }
+
+  void _publishGenerationSettings(GenerationSettingsSnapshot snapshot) {
+    _currentModelProvider = snapshot.currentModel?.providerId;
+    _currentModelId = snapshot.currentModel?.modelId;
+    _titleModelProvider = snapshot.titleModel?.providerId;
+    _titleModelId = snapshot.titleModel?.modelId;
+    _titlePrompt = snapshot.titlePrompt;
+    _translateModelProvider = snapshot.translateModel?.providerId;
+    _translateModelId = snapshot.translateModel?.modelId;
+    _translatePrompt = snapshot.translatePrompt;
+    _ocrModelProvider = snapshot.ocrModel?.providerId;
+    _ocrModelId = snapshot.ocrModel?.modelId;
+    if (snapshot.ocrModel == null) _ocrEnabled = false;
+    _ocrPrompt = snapshot.ocrPrompt;
+    _summaryModelProvider = snapshot.summaryModel?.providerId;
+    _summaryModelId = snapshot.summaryModel?.modelId;
+    _summaryPrompt = snapshot.summaryPrompt;
+    _suggestionModelProvider = snapshot.suggestionModel?.providerId;
+    _suggestionModelId = snapshot.suggestionModel?.modelId;
+    _suggestionPrompt = snapshot.suggestionPrompt;
+    _compressModelProvider = snapshot.compressModel?.providerId;
+    _compressModelId = snapshot.compressModel?.modelId;
+    _compressPrompt = snapshot.compressPrompt;
+    _learningModePrompt = snapshot.learningModePrompt;
+    notifyListeners();
+  }
+
+  GenerationModelSelection? _generationModelSelection(
+    String? providerId,
+    String? modelId,
+  ) {
+    if (providerId == null && modelId == null) return null;
+    if (providerId == null || modelId == null) {
+      throw StateError('generation_model_selection_incomplete');
+    }
+    return GenerationModelSelection(providerId: providerId, modelId: modelId);
+  }
+
   Future<void> syncUpsertProviderConfig(
     String key,
     ProviderConfig config, {
@@ -932,6 +1081,106 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
     return _MigrationResult.applied;
   }
 
+  void _loadPlaintextGenerationSettings(SharedPreferences prefs) {
+    final currentModel = _decodeModelSelection(
+      prefs.getString(_selectedModelKey),
+    );
+    _currentModelProvider = currentModel.$1;
+    _currentModelId = currentModel.$2;
+    final titleModel = _decodeModelSelection(prefs.getString(_titleModelKey));
+    _titleModelProvider = titleModel.$1;
+    _titleModelId = titleModel.$2;
+    _titlePrompt = _storedPrompt(
+      prefs.getString(_titlePromptKey),
+      defaultTitlePrompt,
+    );
+    final translateModel = _decodeModelSelection(
+      prefs.getString(_translateModelKey),
+    );
+    _translateModelProvider = translateModel.$1;
+    _translateModelId = translateModel.$2;
+    _translatePrompt = _storedPrompt(
+      prefs.getString(_translatePromptKey),
+      defaultTranslatePrompt,
+    );
+    final ocrModel = _decodeModelSelection(prefs.getString(_ocrModelKey));
+    _ocrModelProvider = ocrModel.$1;
+    _ocrModelId = ocrModel.$2;
+    _ocrPrompt = _storedPrompt(
+      prefs.getString(_ocrPromptKey),
+      defaultOcrPrompt,
+    );
+    final summaryModel = _decodeModelSelection(
+      prefs.getString(_summaryModelKey),
+    );
+    _summaryModelProvider = summaryModel.$1;
+    _summaryModelId = summaryModel.$2;
+    _summaryPrompt = _storedPrompt(
+      prefs.getString(_summaryPromptKey),
+      defaultSummaryPrompt,
+    );
+    final suggestionModel = _decodeModelSelection(
+      prefs.getString(_suggestionModelKey),
+    );
+    _suggestionModelProvider = suggestionModel.$1;
+    _suggestionModelId = suggestionModel.$2;
+    _suggestionPrompt = _storedPrompt(
+      prefs.getString(_suggestionPromptKey),
+      defaultSuggestionPrompt,
+    );
+    final compressModel = _decodeModelSelection(
+      prefs.getString(_compressModelKey),
+    );
+    _compressModelProvider = compressModel.$1;
+    _compressModelId = compressModel.$2;
+    _compressPrompt = _storedPrompt(
+      prefs.getString(_compressPromptKey),
+      defaultCompressPrompt,
+    );
+    _learningModePrompt = _storedPrompt(
+      prefs.getString(_learningModePromptKey),
+      defaultLearningModePrompt,
+    );
+  }
+
+  Future<void> _persistGenerationSettingsSnapshot(
+    GenerationSettingsSnapshot snapshot,
+  ) async {
+    if (usesE2eeConfigVault(_syncWrites)) return;
+    final prefs = await SharedPreferences.getInstance();
+    await _writePreferencesAtomically(prefs, <String, Object?>{
+      _selectedModelKey: _encodeModelSelection(snapshot.currentModel),
+      _titleModelKey: _encodeModelSelection(snapshot.titleModel),
+      _titlePromptKey: snapshot.titlePrompt,
+      _translateModelKey: _encodeModelSelection(snapshot.translateModel),
+      _translatePromptKey: snapshot.translatePrompt,
+      _ocrModelKey: _encodeModelSelection(snapshot.ocrModel),
+      _ocrPromptKey: snapshot.ocrPrompt,
+      _summaryModelKey: _encodeModelSelection(snapshot.summaryModel),
+      _summaryPromptKey: snapshot.summaryPrompt,
+      _suggestionModelKey: _encodeModelSelection(snapshot.suggestionModel),
+      _suggestionPromptKey: snapshot.suggestionPrompt,
+      _compressModelKey: _encodeModelSelection(snapshot.compressModel),
+      _compressPromptKey: snapshot.compressPrompt,
+      _learningModePromptKey: snapshot.learningModePrompt,
+    }, operation: '保存生成设置');
+  }
+
+  Future<void> _persistGenerationPreference(String key, Object? value) async {
+    if (usesE2eeConfigVault(_syncWrites)) return;
+    final prefs = await SharedPreferences.getInstance();
+    await _writePreferencesAtomically(prefs, <String, Object?>{
+      key: value,
+    }, operation: '保存生成设置');
+  }
+
+  Future<T> _runGenerationSettingsWrite<T>(Future<T> Function() write) {
+    return _syncWrites.runLocal<T>(
+      key: ConfigSyncKeys.generationSettings,
+      write: write,
+    );
+  }
+
   Future<void> _load() async {
     final prefs = await SharedPreferences.getInstance();
     final useConfigVault = usesE2eeConfigVault(_syncWrites);
@@ -1087,115 +1336,21 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
     _pinnedModels
       ..clear()
       ..addAll(pinned);
-    // load selected model
-    final sel = prefs.getString(_selectedModelKey);
-    if (sel != null && sel.contains('::')) {
-      final parts = sel.split('::');
-      if (parts.length >= 2) {
-        _currentModelProvider = parts[0];
-        _currentModelId = parts.sublist(1).join('::');
-      }
-    }
-    // load title model
-    final titleSel = prefs.getString(_titleModelKey);
-    if (titleSel != null && titleSel.contains('::')) {
-      final parts = titleSel.split('::');
-      if (parts.length >= 2) {
-        _titleModelProvider = parts[0];
-        _titleModelId = parts.sublist(1).join('::');
-      }
-    }
-    // load title prompt
-    final tp = prefs.getString(_titlePromptKey);
-    _titlePrompt = (tp == null || tp.trim().isEmpty) ? defaultTitlePrompt : tp;
-    // load translate model
-    final translateSel = prefs.getString(_translateModelKey);
-    if (translateSel != null && translateSel.contains('::')) {
-      final parts = translateSel.split('::');
-      if (parts.length >= 2) {
-        _translateModelProvider = parts[0];
-        _translateModelId = parts.sublist(1).join('::');
-      }
-    }
-    // load translate prompt
-    final transp = prefs.getString(_translatePromptKey);
-    _translatePrompt = (transp == null || transp.trim().isEmpty)
-        ? defaultTranslatePrompt
-        : transp;
+    if (!useConfigVault) _loadPlaintextGenerationSettings(prefs);
     // load translate target language
     final targetLang = prefs.getString(_translateTargetLangKey);
     if (targetLang != null && targetLang.trim().isNotEmpty) {
       _translateTargetLang = targetLang.trim();
     }
-    // load OCR model
-    final ocrSel = prefs.getString(_ocrModelKey);
-    if (ocrSel != null && ocrSel.contains('::')) {
-      final parts = ocrSel.split('::');
-      if (parts.length >= 2) {
-        _ocrModelProvider = parts[0];
-        _ocrModelId = parts.sublist(1).join('::');
-      }
-    }
-    // load OCR prompt
-    final ocrp = prefs.getString(_ocrPromptKey);
-    _ocrPrompt = (ocrp == null || ocrp.trim().isEmpty)
-        ? defaultOcrPrompt
-        : ocrp;
     // load OCR enabled (only effective when model is configured)
     _ocrEnabled = prefs.getBool(_ocrEnabledKey) ?? false;
-    if (_ocrModelProvider == null || _ocrModelId == null) {
+    if (!useConfigVault && (_ocrModelProvider == null || _ocrModelId == null)) {
       _ocrEnabled = false;
     }
-    // load summary model
-    final summarySel = prefs.getString(_summaryModelKey);
-    if (summarySel != null && summarySel.contains('::')) {
-      final parts = summarySel.split('::');
-      if (parts.length >= 2) {
-        _summaryModelProvider = parts[0];
-        _summaryModelId = parts.sublist(1).join('::');
-      }
-    }
-    // load summary prompt
-    final summaryp = prefs.getString(_summaryPromptKey);
-    _summaryPrompt = (summaryp == null || summaryp.trim().isEmpty)
-        ? defaultSummaryPrompt
-        : summaryp;
-    // load chat suggestion model
-    final suggestionSel = prefs.getString(_suggestionModelKey);
-    if (suggestionSel != null && suggestionSel.contains('::')) {
-      final parts = suggestionSel.split('::');
-      if (parts.length >= 2) {
-        _suggestionModelProvider = parts[0];
-        _suggestionModelId = parts.sublist(1).join('::');
-      }
-    }
-    // load chat suggestion prompt
-    final suggestionp = prefs.getString(_suggestionPromptKey);
-    _suggestionPrompt = (suggestionp == null || suggestionp.trim().isEmpty)
-        ? defaultSuggestionPrompt
-        : suggestionp;
     _insertSuggestionOnTapOnly =
         prefs.getBool(_suggestionInsertOnTapOnlyKey) ?? false;
-    // load compress model
-    final compressSel = prefs.getString(_compressModelKey);
-    if (compressSel != null && compressSel.contains('::')) {
-      final parts = compressSel.split('::');
-      if (parts.length >= 2) {
-        _compressModelProvider = parts[0];
-        _compressModelId = parts.sublist(1).join('::');
-      }
-    }
-    // load compress prompt
-    final compressp = prefs.getString(_compressPromptKey);
-    _compressPrompt = (compressp == null || compressp.trim().isEmpty)
-        ? defaultCompressPrompt
-        : compressp;
     // learning mode
     _learningModeEnabled = prefs.getBool(_learningModeEnabledKey) ?? false;
-    final lmp = prefs.getString(_learningModePromptKey);
-    _learningModePrompt = (lmp == null || lmp.trim().isEmpty)
-        ? defaultLearningModePrompt
-        : lmp;
     // load thinking budget (reasoning strength)
     _thinkingBudget = prefs.getInt(_thinkingBudgetKey);
     _titleGenerationThinkingEnabled =
@@ -3105,7 +3260,7 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
     if (modelIds.isEmpty) return 0;
     await ready;
     return _syncWrites.runLocalBatch(
-      keys: _providerMutationKeys(providerKey),
+      keys: _providerRemovalMutationKeys(providerKey),
       write: () => _providerMutationLock.run(
         () => _deleteModelsLocked(providerKey, modelIds),
       ),
@@ -3182,14 +3337,20 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
       providerConfigs: nextConfigs,
       grouping: nextGrouping,
       additionalValues: <String, Object?>{
-        if (removesCurrent) _selectedModelKey: null,
-        if (removesTitle) _titleModelKey: null,
-        if (removesTranslate) _translateModelKey: null,
-        if (removesOcr) _ocrModelKey: null,
+        if (!usesE2eeConfigVault(_syncWrites) && removesCurrent)
+          _selectedModelKey: null,
+        if (!usesE2eeConfigVault(_syncWrites) && removesTitle)
+          _titleModelKey: null,
+        if (!usesE2eeConfigVault(_syncWrites) && removesTranslate)
+          _translateModelKey: null,
+        if (!usesE2eeConfigVault(_syncWrites) && removesOcr) _ocrModelKey: null,
         if (removesOcr) _ocrEnabledKey: false,
-        if (removesSummary) _summaryModelKey: null,
-        if (removesSuggestion) _suggestionModelKey: null,
-        if (removesCompress) _compressModelKey: null,
+        if (!usesE2eeConfigVault(_syncWrites) && removesSummary)
+          _summaryModelKey: null,
+        if (!usesE2eeConfigVault(_syncWrites) && removesSuggestion)
+          _suggestionModelKey: null,
+        if (!usesE2eeConfigVault(_syncWrites) && removesCompress)
+          _compressModelKey: null,
         if (!setEquals(nextPinned, _pinnedModels))
           _pinnedModelsKey: nextPinned.toList(growable: false),
       },
@@ -3416,50 +3577,57 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
   /// Clears all global model selections (current, title, translate, OCR) that reference the given provider.
   /// Used when a provider is disabled or deleted.
   Future<void> clearSelectionsForProvider(String providerKey) async {
+    await _runGenerationSettingsWrite(
+      () => _clearSelectionsForProvider(providerKey),
+    );
+  }
+
+  Future<void> _clearSelectionsForProvider(String providerKey) async {
     final prefs = await SharedPreferences.getInstance();
+    final persistPlaintext = !usesE2eeConfigVault(_syncWrites);
     bool changed = false;
     if (_currentModelProvider == providerKey) {
       _currentModelProvider = null;
       _currentModelId = null;
-      await prefs.remove(_selectedModelKey);
+      if (persistPlaintext) await prefs.remove(_selectedModelKey);
       changed = true;
     }
     if (_titleModelProvider == providerKey) {
       _titleModelProvider = null;
       _titleModelId = null;
-      await prefs.remove(_titleModelKey);
+      if (persistPlaintext) await prefs.remove(_titleModelKey);
       changed = true;
     }
     if (_translateModelProvider == providerKey) {
       _translateModelProvider = null;
       _translateModelId = null;
-      await prefs.remove(_translateModelKey);
+      if (persistPlaintext) await prefs.remove(_translateModelKey);
       changed = true;
     }
     if (_ocrModelProvider == providerKey) {
       _ocrModelProvider = null;
       _ocrModelId = null;
       _ocrEnabled = false;
-      await prefs.remove(_ocrModelKey);
+      if (persistPlaintext) await prefs.remove(_ocrModelKey);
       await prefs.setBool(_ocrEnabledKey, false);
       changed = true;
     }
     if (_summaryModelProvider == providerKey) {
       _summaryModelProvider = null;
       _summaryModelId = null;
-      await prefs.remove(_summaryModelKey);
+      if (persistPlaintext) await prefs.remove(_summaryModelKey);
       changed = true;
     }
     if (_suggestionModelProvider == providerKey) {
       _suggestionModelProvider = null;
       _suggestionModelId = null;
-      await prefs.remove(_suggestionModelKey);
+      if (persistPlaintext) await prefs.remove(_suggestionModelKey);
       changed = true;
     }
     if (_compressModelProvider == providerKey) {
       _compressModelProvider = null;
       _compressModelId = null;
-      await prefs.remove(_compressModelKey);
+      if (persistPlaintext) await prefs.remove(_compressModelKey);
       changed = true;
     }
     if (changed) notifyListeners();
@@ -3471,52 +3639,62 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
     String providerKey,
     String modelId,
   ) async {
+    await _runGenerationSettingsWrite(
+      () => _clearSelectionsForModel(providerKey, modelId),
+    );
+  }
+
+  Future<void> _clearSelectionsForModel(
+    String providerKey,
+    String modelId,
+  ) async {
     final prefs = await SharedPreferences.getInstance();
+    final persistPlaintext = !usesE2eeConfigVault(_syncWrites);
     bool changed = false;
     if (_currentModelProvider == providerKey && _currentModelId == modelId) {
       _currentModelProvider = null;
       _currentModelId = null;
-      await prefs.remove(_selectedModelKey);
+      if (persistPlaintext) await prefs.remove(_selectedModelKey);
       changed = true;
     }
     if (_titleModelProvider == providerKey && _titleModelId == modelId) {
       _titleModelProvider = null;
       _titleModelId = null;
-      await prefs.remove(_titleModelKey);
+      if (persistPlaintext) await prefs.remove(_titleModelKey);
       changed = true;
     }
     if (_translateModelProvider == providerKey &&
         _translateModelId == modelId) {
       _translateModelProvider = null;
       _translateModelId = null;
-      await prefs.remove(_translateModelKey);
+      if (persistPlaintext) await prefs.remove(_translateModelKey);
       changed = true;
     }
     if (_ocrModelProvider == providerKey && _ocrModelId == modelId) {
       _ocrModelProvider = null;
       _ocrModelId = null;
       _ocrEnabled = false;
-      await prefs.remove(_ocrModelKey);
+      if (persistPlaintext) await prefs.remove(_ocrModelKey);
       await prefs.setBool(_ocrEnabledKey, false);
       changed = true;
     }
     if (_summaryModelProvider == providerKey && _summaryModelId == modelId) {
       _summaryModelProvider = null;
       _summaryModelId = null;
-      await prefs.remove(_summaryModelKey);
+      if (persistPlaintext) await prefs.remove(_summaryModelKey);
       changed = true;
     }
     if (_suggestionModelProvider == providerKey &&
         _suggestionModelId == modelId) {
       _suggestionModelProvider = null;
       _suggestionModelId = null;
-      await prefs.remove(_suggestionModelKey);
+      if (persistPlaintext) await prefs.remove(_suggestionModelKey);
       changed = true;
     }
     if (_compressModelProvider == providerKey && _compressModelId == modelId) {
       _compressModelProvider = null;
       _compressModelId = null;
-      await prefs.remove(_compressModelKey);
+      if (persistPlaintext) await prefs.remove(_compressModelKey);
       changed = true;
     }
     // Also remove from pinned if applicable
@@ -3536,7 +3714,7 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
     if (executor is ConfigAssetSyncWriteExecutor) {
       final entityKey = ConfigSyncKeys.provider(key);
       await executor.runLocalBatchWithConfigAssets<bool>(
-        keys: _providerMutationKeys(key),
+        keys: _providerRemovalMutationKeys(key),
         targets: <ConfigAssetSyncTarget>[
           ConfigAssetSyncTarget(
             key: E2eeConfigAssetKey(
@@ -3552,7 +3730,7 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
       return;
     }
     await executor.runLocalBatch<bool>(
-      keys: _providerMutationKeys(key),
+      keys: _providerRemovalMutationKeys(key),
       write: () => _deleteProviderConfig(key),
     );
   }
@@ -3597,14 +3775,20 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
       providerConfigs: nextConfigs,
       grouping: nextGrouping,
       additionalValues: <String, Object?>{
-        if (removesCurrent) _selectedModelKey: null,
-        if (removesTitle) _titleModelKey: null,
-        if (removesTranslate) _translateModelKey: null,
-        if (removesOcr) _ocrModelKey: null,
+        if (!usesE2eeConfigVault(_syncWrites) && removesCurrent)
+          _selectedModelKey: null,
+        if (!usesE2eeConfigVault(_syncWrites) && removesTitle)
+          _titleModelKey: null,
+        if (!usesE2eeConfigVault(_syncWrites) && removesTranslate)
+          _translateModelKey: null,
+        if (!usesE2eeConfigVault(_syncWrites) && removesOcr) _ocrModelKey: null,
         if (removesOcr) _ocrEnabledKey: false,
-        if (removesSummary) _summaryModelKey: null,
-        if (removesSuggestion) _suggestionModelKey: null,
-        if (removesCompress) _compressModelKey: null,
+        if (!usesE2eeConfigVault(_syncWrites) && removesSummary)
+          _summaryModelKey: null,
+        if (!usesE2eeConfigVault(_syncWrites) && removesSuggestion)
+          _suggestionModelKey: null,
+        if (!usesE2eeConfigVault(_syncWrites) && removesCompress)
+          _compressModelKey: null,
         if (!setEquals(nextPinned, _pinnedModels))
           _pinnedModelsKey: nextPinned.toList(growable: false),
       },
@@ -3679,19 +3863,24 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
       ? '${_currentModelProvider!}::${_currentModelId!}'
       : null;
   Future<void> setCurrentModel(String providerKey, String modelId) async {
-    _currentModelProvider = providerKey;
-    _currentModelId = modelId;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_selectedModelKey, '$providerKey::$modelId');
+    await _runGenerationSettingsWrite(() async {
+      _currentModelProvider = providerKey;
+      _currentModelId = modelId;
+      notifyListeners();
+      await _persistGenerationPreference(
+        _selectedModelKey,
+        '$providerKey::$modelId',
+      );
+    });
   }
 
   Future<void> resetCurrentModel() async {
-    _currentModelProvider = null;
-    _currentModelId = null;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_selectedModelKey);
+    await _runGenerationSettingsWrite(() async {
+      _currentModelProvider = null;
+      _currentModelId = null;
+      notifyListeners();
+      await _persistGenerationPreference(_selectedModelKey, null);
+    });
   }
 
   // Title model and prompt
@@ -3721,26 +3910,32 @@ You need to summarize the conversation between user and assistant into a short t
   String get titlePrompt => _titlePrompt;
 
   Future<void> setTitleModel(String providerKey, String modelId) async {
-    _titleModelProvider = providerKey;
-    _titleModelId = modelId;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_titleModelKey, '$providerKey::$modelId');
+    await _runGenerationSettingsWrite(() async {
+      _titleModelProvider = providerKey;
+      _titleModelId = modelId;
+      notifyListeners();
+      await _persistGenerationPreference(
+        _titleModelKey,
+        '$providerKey::$modelId',
+      );
+    });
   }
 
   Future<void> resetTitleModel() async {
-    _titleModelProvider = null;
-    _titleModelId = null;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_titleModelKey);
+    await _runGenerationSettingsWrite(() async {
+      _titleModelProvider = null;
+      _titleModelId = null;
+      notifyListeners();
+      await _persistGenerationPreference(_titleModelKey, null);
+    });
   }
 
   Future<void> setTitlePrompt(String prompt) async {
-    _titlePrompt = prompt.trim().isEmpty ? defaultTitlePrompt : prompt;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_titlePromptKey, _titlePrompt);
+    await _runGenerationSettingsWrite(() async {
+      _titlePrompt = prompt.trim().isEmpty ? defaultTitlePrompt : prompt;
+      notifyListeners();
+      await _persistGenerationPreference(_titlePromptKey, _titlePrompt);
+    });
   }
 
   Future<void> resetTitlePrompt() async => setTitlePrompt(defaultTitlePrompt);
@@ -3770,26 +3965,34 @@ Please translate the <source_text> section:
   String? get translateTargetLang => _translateTargetLang;
 
   Future<void> setTranslateModel(String providerKey, String modelId) async {
-    _translateModelProvider = providerKey;
-    _translateModelId = modelId;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_translateModelKey, '$providerKey::$modelId');
+    await _runGenerationSettingsWrite(() async {
+      _translateModelProvider = providerKey;
+      _translateModelId = modelId;
+      notifyListeners();
+      await _persistGenerationPreference(
+        _translateModelKey,
+        '$providerKey::$modelId',
+      );
+    });
   }
 
   Future<void> resetTranslateModel() async {
-    _translateModelProvider = null;
-    _translateModelId = null;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_translateModelKey);
+    await _runGenerationSettingsWrite(() async {
+      _translateModelProvider = null;
+      _translateModelId = null;
+      notifyListeners();
+      await _persistGenerationPreference(_translateModelKey, null);
+    });
   }
 
   Future<void> setTranslatePrompt(String prompt) async {
-    _translatePrompt = prompt.trim().isEmpty ? defaultTranslatePrompt : prompt;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_translatePromptKey, _translatePrompt);
+    await _runGenerationSettingsWrite(() async {
+      _translatePrompt = prompt.trim().isEmpty
+          ? defaultTranslatePrompt
+          : prompt;
+      notifyListeners();
+      await _persistGenerationPreference(_translatePromptKey, _translatePrompt);
+    });
   }
 
   Future<void> resetTranslatePrompt() async =>
@@ -3840,28 +4043,35 @@ Do not interpret or translate—only transcribe and describe what is visually pr
   bool get ocrEnabled => _ocrEnabled;
 
   Future<void> setOcrModel(String providerKey, String modelId) async {
-    _ocrModelProvider = providerKey;
-    _ocrModelId = modelId;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_ocrModelKey, '$providerKey::$modelId');
+    await _runGenerationSettingsWrite(() async {
+      _ocrModelProvider = providerKey;
+      _ocrModelId = modelId;
+      notifyListeners();
+      await _persistGenerationPreference(
+        _ocrModelKey,
+        '$providerKey::$modelId',
+      );
+    });
   }
 
   Future<void> resetOcrModel() async {
-    _ocrModelProvider = null;
-    _ocrModelId = null;
-    _ocrEnabled = false;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_ocrModelKey);
-    await prefs.setBool(_ocrEnabledKey, false);
+    await _runGenerationSettingsWrite(() async {
+      _ocrModelProvider = null;
+      _ocrModelId = null;
+      _ocrEnabled = false;
+      notifyListeners();
+      await _persistGenerationPreference(_ocrModelKey, null);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_ocrEnabledKey, false);
+    });
   }
 
   Future<void> setOcrPrompt(String prompt) async {
-    _ocrPrompt = prompt.trim().isEmpty ? defaultOcrPrompt : prompt;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_ocrPromptKey, _ocrPrompt);
+    await _runGenerationSettingsWrite(() async {
+      _ocrPrompt = prompt.trim().isEmpty ? defaultOcrPrompt : prompt;
+      notifyListeners();
+      await _persistGenerationPreference(_ocrPromptKey, _ocrPrompt);
+    });
   }
 
   Future<void> resetOcrPrompt() async => setOcrPrompt(defaultOcrPrompt);
@@ -3910,26 +4120,32 @@ Generate or update a brief summary of the user's questions and intentions.
   String get summaryPrompt => _summaryPrompt;
 
   Future<void> setSummaryModel(String providerKey, String modelId) async {
-    _summaryModelProvider = providerKey;
-    _summaryModelId = modelId;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_summaryModelKey, '$providerKey::$modelId');
+    await _runGenerationSettingsWrite(() async {
+      _summaryModelProvider = providerKey;
+      _summaryModelId = modelId;
+      notifyListeners();
+      await _persistGenerationPreference(
+        _summaryModelKey,
+        '$providerKey::$modelId',
+      );
+    });
   }
 
   Future<void> resetSummaryModel() async {
-    _summaryModelProvider = null;
-    _summaryModelId = null;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_summaryModelKey);
+    await _runGenerationSettingsWrite(() async {
+      _summaryModelProvider = null;
+      _summaryModelId = null;
+      notifyListeners();
+      await _persistGenerationPreference(_summaryModelKey, null);
+    });
   }
 
   Future<void> setSummaryPrompt(String prompt) async {
-    _summaryPrompt = prompt.trim().isEmpty ? defaultSummaryPrompt : prompt;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_summaryPromptKey, _summaryPrompt);
+    await _runGenerationSettingsWrite(() async {
+      _summaryPrompt = prompt.trim().isEmpty ? defaultSummaryPrompt : prompt;
+      notifyListeners();
+      await _persistGenerationPreference(_summaryPromptKey, _summaryPrompt);
+    });
   }
 
   Future<void> resetSummaryPrompt() async =>
@@ -3967,28 +4183,37 @@ Rules:
   bool get insertSuggestionOnTapOnly => _insertSuggestionOnTapOnly;
 
   Future<void> setSuggestionModel(String providerKey, String modelId) async {
-    _suggestionModelProvider = providerKey;
-    _suggestionModelId = modelId;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_suggestionModelKey, '$providerKey::$modelId');
+    await _runGenerationSettingsWrite(() async {
+      _suggestionModelProvider = providerKey;
+      _suggestionModelId = modelId;
+      notifyListeners();
+      await _persistGenerationPreference(
+        _suggestionModelKey,
+        '$providerKey::$modelId',
+      );
+    });
   }
 
   Future<void> resetSuggestionModel() async {
-    _suggestionModelProvider = null;
-    _suggestionModelId = null;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_suggestionModelKey);
+    await _runGenerationSettingsWrite(() async {
+      _suggestionModelProvider = null;
+      _suggestionModelId = null;
+      notifyListeners();
+      await _persistGenerationPreference(_suggestionModelKey, null);
+    });
   }
 
   Future<void> setSuggestionPrompt(String prompt) async {
-    _suggestionPrompt = prompt.trim().isEmpty
-        ? defaultSuggestionPrompt
-        : prompt;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_suggestionPromptKey, _suggestionPrompt);
+    await _runGenerationSettingsWrite(() async {
+      _suggestionPrompt = prompt.trim().isEmpty
+          ? defaultSuggestionPrompt
+          : prompt;
+      notifyListeners();
+      await _persistGenerationPreference(
+        _suggestionPromptKey,
+        _suggestionPrompt,
+      );
+    });
   }
 
   Future<void> resetSuggestionPrompt() async =>
@@ -4038,26 +4263,32 @@ Requirements:
   String get compressPrompt => _compressPrompt;
 
   Future<void> setCompressModel(String providerKey, String modelId) async {
-    _compressModelProvider = providerKey;
-    _compressModelId = modelId;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_compressModelKey, '$providerKey::$modelId');
+    await _runGenerationSettingsWrite(() async {
+      _compressModelProvider = providerKey;
+      _compressModelId = modelId;
+      notifyListeners();
+      await _persistGenerationPreference(
+        _compressModelKey,
+        '$providerKey::$modelId',
+      );
+    });
   }
 
   Future<void> resetCompressModel() async {
-    _compressModelProvider = null;
-    _compressModelId = null;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_compressModelKey);
+    await _runGenerationSettingsWrite(() async {
+      _compressModelProvider = null;
+      _compressModelId = null;
+      notifyListeners();
+      await _persistGenerationPreference(_compressModelKey, null);
+    });
   }
 
   Future<void> setCompressPrompt(String prompt) async {
-    _compressPrompt = prompt.trim().isEmpty ? defaultCompressPrompt : prompt;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_compressPromptKey, _compressPrompt);
+    await _runGenerationSettingsWrite(() async {
+      _compressPrompt = prompt.trim().isEmpty ? defaultCompressPrompt : prompt;
+      notifyListeners();
+      await _persistGenerationPreference(_compressPromptKey, _compressPrompt);
+    });
   }
 
   Future<void> resetCompressPrompt() async =>
@@ -4114,12 +4345,16 @@ DO NOT GIVE ANSWERS OR DO HOMEWORK FOR THE USER. If the user asks a math or logi
   String _learningModePrompt = defaultLearningModePrompt;
   String get learningModePrompt => _learningModePrompt;
   Future<void> setLearningModePrompt(String prompt) async {
-    _learningModePrompt = prompt.trim().isEmpty
-        ? defaultLearningModePrompt
-        : prompt;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_learningModePromptKey, _learningModePrompt);
+    await _runGenerationSettingsWrite(() async {
+      _learningModePrompt = prompt.trim().isEmpty
+          ? defaultLearningModePrompt
+          : prompt;
+      notifyListeners();
+      await _persistGenerationPreference(
+        _learningModePromptKey,
+        _learningModePrompt,
+      );
+    });
   }
 
   Future<void> resetLearningModePrompt() async =>
@@ -5153,6 +5388,20 @@ final class _ProviderGroupingSnapshot {
   final Map<String, bool> collapsed;
   final int ungroupedPosition;
 }
+
+(String?, String?) _decodeModelSelection(String? value) {
+  if (value == null || !value.contains('::')) return (null, null);
+  final parts = value.split('::');
+  if (parts.length < 2 || parts.first.isEmpty) return (null, null);
+  final modelId = parts.sublist(1).join('::');
+  return modelId.isEmpty ? (null, null) : (parts.first, modelId);
+}
+
+String? _encodeModelSelection(GenerationModelSelection? selection) =>
+    selection == null ? null : '${selection.providerId}::${selection.modelId}';
+
+String _storedPrompt(String? value, String fallback) =>
+    value == null || value.trim().isEmpty ? fallback : value;
 
 Future<void> _copyManagedFile(File source, File destination) async {
   await source.copy(destination.path);

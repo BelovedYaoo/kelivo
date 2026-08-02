@@ -107,6 +107,9 @@ final class E2eeConfigProviderBinding implements E2eeConfigSyncBinding {
           entries.addAll(await commands.readByType(entityType));
         }
         entries.sort(_compareVaultEntries);
+        final hasGenerationSettings = entries.any(
+          (entry) => entry.key == ConfigSyncKeys.generationSettings,
+        );
         await _runNotificationBatch(() async {
           for (final entry in entries) {
             final payload = E2eeSyncPayloadCodec.decode(
@@ -114,6 +117,9 @@ final class E2eeConfigProviderBinding implements E2eeConfigSyncBinding {
               bytes: entry.payload,
             );
             await _applyValue(entry.key, payload);
+          }
+          if (!hasGenerationSettings) {
+            await _applyDelete(ConfigSyncKeys.generationSettings);
           }
         });
         _initialized = true;
@@ -457,6 +463,9 @@ final class E2eeConfigProviderBinding implements E2eeConfigSyncBinding {
       ConfigSyncKeys.mcpState => <String, Object?>{
         'requestTimeoutSeconds': _mcp.requestTimeoutSeconds,
       },
+      ConfigSyncKeys.generationSettings => _generationSettingsPayload(
+        _settings.generationSettingsSnapshot,
+      ),
       _ => throw StateError('sync_config_preference_id_unreachable'),
     };
   }
@@ -697,6 +706,10 @@ final class E2eeConfigProviderBinding implements E2eeConfigSyncBinding {
         await _mcp.syncUpdateRequestTimeout(
           Duration(seconds: payload['requestTimeoutSeconds']! as int),
         );
+      case ConfigSyncKeys.generationSettings:
+        await _settings.syncApplyGenerationSettings(
+          _generationSettingsSnapshot(payload),
+        );
       default:
         throw StateError('sync_config_preference_id_unreachable');
     }
@@ -762,6 +775,10 @@ final class E2eeConfigProviderBinding implements E2eeConfigSyncBinding {
         );
       case ConfigSyncKeys.mcpState:
         await _mcp.syncUpdateRequestTimeout(const Duration(seconds: 30));
+      case ConfigSyncKeys.generationSettings:
+        await _settings.syncApplyGenerationSettings(
+          SettingsProvider.defaultGenerationSettingsSnapshot,
+        );
       default:
         throw StateError('sync_config_preference_id_unreachable');
     }
@@ -806,6 +823,62 @@ bool _sameAssetIdentity(
     left.manifestKeyEpoch == right.manifestKeyEpoch &&
     left.manifestRevision == right.manifestRevision &&
     left.kind == right.kind;
+
+Map<String, Object?> _generationSettingsPayload(
+  GenerationSettingsSnapshot snapshot,
+) => <String, Object?>{
+  'currentModel': _generationModelSelectionPayload(snapshot.currentModel),
+  'titleModel': _generationModelSelectionPayload(snapshot.titleModel),
+  'titlePrompt': snapshot.titlePrompt,
+  'translateModel': _generationModelSelectionPayload(snapshot.translateModel),
+  'translatePrompt': snapshot.translatePrompt,
+  'ocrModel': _generationModelSelectionPayload(snapshot.ocrModel),
+  'ocrPrompt': snapshot.ocrPrompt,
+  'summaryModel': _generationModelSelectionPayload(snapshot.summaryModel),
+  'summaryPrompt': snapshot.summaryPrompt,
+  'suggestionModel': _generationModelSelectionPayload(snapshot.suggestionModel),
+  'suggestionPrompt': snapshot.suggestionPrompt,
+  'compressModel': _generationModelSelectionPayload(snapshot.compressModel),
+  'compressPrompt': snapshot.compressPrompt,
+  'learningModePrompt': snapshot.learningModePrompt,
+};
+
+Map<String, Object?>? _generationModelSelectionPayload(
+  GenerationModelSelection? selection,
+) => selection == null
+    ? null
+    : <String, Object?>{
+        'providerId': selection.providerId,
+        'modelId': selection.modelId,
+      };
+
+GenerationSettingsSnapshot _generationSettingsSnapshot(
+  Map<String, Object?> payload,
+) => GenerationSettingsSnapshot(
+  currentModel: _generationModelSelection(payload['currentModel']),
+  titleModel: _generationModelSelection(payload['titleModel']),
+  titlePrompt: payload['titlePrompt']! as String,
+  translateModel: _generationModelSelection(payload['translateModel']),
+  translatePrompt: payload['translatePrompt']! as String,
+  ocrModel: _generationModelSelection(payload['ocrModel']),
+  ocrPrompt: payload['ocrPrompt']! as String,
+  summaryModel: _generationModelSelection(payload['summaryModel']),
+  summaryPrompt: payload['summaryPrompt']! as String,
+  suggestionModel: _generationModelSelection(payload['suggestionModel']),
+  suggestionPrompt: payload['suggestionPrompt']! as String,
+  compressModel: _generationModelSelection(payload['compressModel']),
+  compressPrompt: payload['compressPrompt']! as String,
+  learningModePrompt: payload['learningModePrompt']! as String,
+);
+
+GenerationModelSelection? _generationModelSelection(Object? value) {
+  if (value == null) return null;
+  final object = value as Map<String, Object?>;
+  return GenerationModelSelection(
+    providerId: object['providerId']! as String,
+    modelId: object['modelId']! as String,
+  );
+}
 
 final class _ConfigProviderOperationLock {
   Future<void> _tail = Future<void>.value();

@@ -467,6 +467,28 @@ _configPayloadCases() {
       key: ConfigSyncKeys.mcpState,
       payload: <String, Object?>{'requestTimeoutSeconds': 30},
     ),
+    (
+      key: ConfigSyncKeys.generationSettings,
+      payload: <String, Object?>{
+        'currentModel': <String, Object?>{
+          'providerId': providerId,
+          'modelId': 'gpt-4.1',
+        },
+        'titleModel': null,
+        'titlePrompt': '标题提示词',
+        'translateModel': null,
+        'translatePrompt': '翻译提示词',
+        'ocrModel': null,
+        'ocrPrompt': 'OCR 提示词',
+        'summaryModel': null,
+        'summaryPrompt': '摘要提示词',
+        'suggestionModel': null,
+        'suggestionPrompt': '建议提示词',
+        'compressModel': null,
+        'compressPrompt': '压缩提示词',
+        'learningModePrompt': '学习模式提示词',
+      },
+    ),
   ];
 }
 
@@ -6891,7 +6913,7 @@ void main() {
   });
 
   group('E2EE config payload codec and adapter', () {
-    test('十类配置实体与八个偏好单例规范往返且聊天 schema 不退化', () {
+    test('十类配置实体与九个偏好单例规范往返且聊天 schema 不退化', () {
       final seenEntityTypes = <String>{};
       for (final testCase in _configPayloadCases()) {
         seenEntityTypes.add(testCase.key.entityType);
@@ -6924,6 +6946,33 @@ void main() {
       expect(
         E2eeSyncPayloadCodec.decode(entityKey: chatKey, bytes: chatEncoded),
         _conversationPayload('聊天回归'),
+      );
+    });
+
+    test('生成设置拒绝不完整模型引用与空提示词', () {
+      final generationSettings = _configPayloadCases().singleWhere(
+        (testCase) => testCase.key == ConfigSyncKeys.generationSettings,
+      );
+
+      expect(
+        () => E2eeSyncPayloadCodec.encode(
+          entityKey: generationSettings.key,
+          payload: <String, Object?>{
+            ...generationSettings.payload,
+            'currentModel': <String, Object?>{'providerId': 'provider-openai'},
+          },
+        ),
+        throwsFormatException,
+      );
+      expect(
+        () => E2eeSyncPayloadCodec.encode(
+          entityKey: generationSettings.key,
+          payload: <String, Object?>{
+            ...generationSettings.payload,
+            'titlePrompt': '   ',
+          },
+        ),
+        throwsFormatException,
       );
     });
 

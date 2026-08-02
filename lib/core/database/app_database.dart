@@ -1650,7 +1650,8 @@ class E2eeConfigEntryRows extends Table {
         "'profile:default', 'provider-grouping:default', "
         "'assistant-selection:default', 'world-book-activity:default', "
         "'instruction-activity:default', 'search-state:default', "
-        "'tts-state:default', 'mcp-state:default'))",
+        "'tts-state:default', 'mcp-state:default', "
+        "'generation-settings:default'))",
   ];
 }
 
@@ -2252,7 +2253,7 @@ class AppDatabase extends _$AppDatabase {
   static const databaseFileName = 'kelivo.db';
 
   // 已验证成员清单锚点必须与内容数据库同受 SQLCipher 和硬切安装门保护。
-  static const currentSchemaVersion = 26;
+  static const currentSchemaVersion = 27;
   // 明确保留 SQLite 既有的 1000 页检查点节奏。按常见的 4 KiB 页大小计算，
   // 会在约 4 MiB 时开始检查点，但真实边界仍以页大小为准。
   static const walAutoCheckpointPages = 1000;

@@ -57,6 +57,10 @@ abstract final class ConfigSyncKeys {
     entityType: preferenceType,
     entityId: 'mcp-state:default',
   );
+  static const SyncEntityKey generationSettings = SyncEntityKey(
+    entityType: preferenceType,
+    entityId: 'generation-settings:default',
+  );
 
   static const Set<String> preferenceEntityIds = <String>{
     'profile:default',
@@ -67,6 +71,7 @@ abstract final class ConfigSyncKeys {
     'search-state:default',
     'tts-state:default',
     'mcp-state:default',
+    'generation-settings:default',
   };
 
   static SyncEntityKey provider(String id) => _entity(providerType, id);

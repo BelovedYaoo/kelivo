@@ -2,19 +2,58 @@ import 'dart:io';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:Kelivo/core/models/assistant.dart';
 import 'package:Kelivo/core/models/chat_message.dart';
 import 'package:Kelivo/core/models/conversation.dart';
+import 'package:Kelivo/core/models/instruction_injection.dart';
+import 'package:Kelivo/core/providers/instruction_injection_provider.dart';
 import 'package:Kelivo/core/providers/settings_provider.dart';
 import 'package:Kelivo/core/services/chat/chat_service.dart';
+import 'package:Kelivo/core/services/sync/sync_codec.dart';
 import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
 import 'package:Kelivo/features/home/services/message_builder_service.dart';
 
 class _FakeBuildContext implements BuildContext {
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _VaultWriteExecutor implements E2eeConfigVaultWriteExecutor {
+  const _VaultWriteExecutor();
+
+  @override
+  Future<T> runLocal<T>({
+    required SyncEntityKey key,
+    required Future<T> Function() write,
+  }) => Future<T>.sync(write);
+
+  @override
+  Future<T> runLocalBatch<T>({
+    required Iterable<SyncEntityKey> keys,
+    required Future<T> Function() write,
+  }) => Future<T>.sync(write);
+}
+
+Future<BuildContext> _pumpInstructionProvider(
+  WidgetTester tester,
+  InstructionInjectionProvider provider,
+) async {
+  late BuildContext context;
+  await tester.pumpWidget(
+    ChangeNotifierProvider<InstructionInjectionProvider>.value(
+      value: provider,
+      child: Builder(
+        builder: (builderContext) {
+          context = builderContext;
+          return const SizedBox.shrink();
+        },
+      ),
+    ),
+  );
+  return context;
 }
 
 class _FakeChatService extends ChatService {
@@ -80,6 +119,67 @@ ChatMessageAttachment _attachment({
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
+  });
+
+  group('MessageBuilderService instruction injection', () {
+    testWidgets('Vault 注入为空时不回退旧明文学习提示词', (tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'learning_mode_enabled_v1': true,
+        'learning_mode_prompt_v1': '旧明文学习提示词',
+      });
+      final provider = InstructionInjectionProvider(
+        syncWriteExecutor: const _VaultWriteExecutor(),
+      );
+      addTearDown(provider.dispose);
+      final context = await _pumpInstructionProvider(tester, provider);
+      final service = MessageBuilderService(
+        chatService: _FakeChatService(const {}),
+        contextProvider: context,
+      );
+      final messages = <Map<String, dynamic>>[
+        <String, dynamic>{'role': 'user', 'content': '问题'},
+      ];
+
+      await service.injectInstructionPrompts(messages, null);
+
+      expect(messages, <Map<String, dynamic>>[
+        <String, dynamic>{'role': 'user', 'content': '问题'},
+      ]);
+      final preferences = await SharedPreferences.getInstance();
+      expect(preferences.getString('instruction_injections_v1'), isNull);
+    });
+
+    testWidgets('Vault 中激活的指令注入进入模型上下文', (tester) async {
+      final provider = InstructionInjectionProvider(
+        syncWriteExecutor: const _VaultWriteExecutor(),
+      );
+      addTearDown(provider.dispose);
+      await provider.syncUpsert(
+        const InstructionInjection(
+          id: 'vault-instruction',
+          title: 'Vault',
+          prompt: '仅来自 Vault 的提示词',
+        ),
+        position: 0,
+      );
+      await provider.syncReplaceActiveIds(const <String, List<String>>{
+        '__global__': <String>['vault-instruction'],
+      });
+      final context = await _pumpInstructionProvider(tester, provider);
+      final service = MessageBuilderService(
+        chatService: _FakeChatService(const {}),
+        contextProvider: context,
+      );
+      final messages = <Map<String, dynamic>>[
+        <String, dynamic>{'role': 'user', 'content': '问题'},
+      ];
+
+      await service.injectInstructionPrompts(messages, null);
+
+      expect(messages.first['role'], 'system');
+      expect(messages.first['content'], '仅来自 Vault 的提示词');
+      expect(messages.last['content'], '问题');
+    });
   });
 
   group('MessageBuilderService.parseInputFromRaw', () {

@@ -36,6 +36,20 @@ const _expectedRetiredPreferenceKeys = <String>{
   'tts_text_selection_mode_v1',
   'mcp_servers_v1',
   'mcp_request_timeout_ms_v1',
+  'selected_model_v1',
+  'title_model_v1',
+  'title_prompt_v1',
+  'translate_model_v1',
+  'translate_prompt_v1',
+  'ocr_model_v1',
+  'ocr_prompt_v1',
+  'summary_model_v1',
+  'summary_prompt_v1',
+  'suggestion_model_v1',
+  'suggestion_prompt_v1',
+  'compress_model_v1',
+  'compress_prompt_v1',
+  'learning_mode_prompt_v1',
 };
 
 void main() {

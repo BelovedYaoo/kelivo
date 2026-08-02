@@ -6,7 +6,6 @@ import '../../../core/models/assistant.dart';
 import '../../../core/models/chat_input_data.dart';
 import '../../../core/models/chat_message.dart';
 import '../../../core/models/conversation.dart';
-import '../../../core/models/instruction_injection.dart';
 import '../../../core/models/world_book.dart';
 import '../../../core/providers/memory_provider.dart';
 import '../../../core/providers/settings_provider.dart';
@@ -14,7 +13,6 @@ import '../../../core/providers/user_provider.dart';
 import '../../../core/services/chat/chat_service.dart';
 import '../../../core/services/chat/document_text_extractor.dart';
 import '../../../core/services/chat/prompt_transformer.dart';
-import '../../../core/services/instruction_injection_store.dart';
 import '../../../core/services/world_book_store.dart';
 import '../../../core/services/search/search_tool_service.dart';
 import '../../../core/providers/instruction_injection_provider.dart';
@@ -666,30 +664,16 @@ class MessageBuilderService {
     List<Map<String, dynamic>> apiMessages,
     String? assistantId,
   ) async {
-    try {
-      List<InstructionInjection> actives = const <InstructionInjection>[];
-      try {
-        final ip = contextProvider.read<InstructionInjectionProvider>();
-        actives = ip.activesFor(assistantId);
-        if (actives.isEmpty) {
-          actives = await InstructionInjectionStore.getActives(
-            assistantId: assistantId,
-          );
-        }
-      } catch (_) {
-        actives = await InstructionInjectionStore.getActives(
-          assistantId: assistantId,
-        );
-      }
-      final prompts = actives
-          .map((e) => e.prompt.trim())
-          .where((p) => p.isNotEmpty)
-          .toList(growable: false);
-      if (prompts.isNotEmpty) {
-        final lp = prompts.join('\n\n');
-        _appendToSystemMessage(apiMessages, lp);
-      }
-    } catch (_) {}
+    final provider = contextProvider.read<InstructionInjectionProvider>();
+    await provider.initialize();
+    final prompts = provider
+        .activesFor(assistantId)
+        .map((item) => item.prompt.trim())
+        .where((prompt) => prompt.isNotEmpty)
+        .toList(growable: false);
+    if (prompts.isNotEmpty) {
+      _appendToSystemMessage(apiMessages, prompts.join('\n\n'));
+    }
   }
 
   /// Inject world book (lorebook) entries into apiMessages.
