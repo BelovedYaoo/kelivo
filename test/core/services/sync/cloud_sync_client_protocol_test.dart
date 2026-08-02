@@ -2431,6 +2431,164 @@ void main() {
     );
   });
 
+  test('账户恢复 replacement challenge 绑定首轮完成证明与目标设备', () async {
+    final manifest = _filledBytes(
+      cloudSyncMembershipManifestMinimumBytes,
+      0x61,
+    );
+    final manifestDigest = Uint8List.fromList(sha256.convert(manifest).bytes);
+    final capsule = _filledBytes(cloudSyncRecoveryCapsuleBytes, 0x62);
+    final capsuleDigest = Uint8List.fromList(sha256.convert(capsule).bytes);
+    final completionProofDigest = _filledBytes(32, 0x63);
+    final request = E2eeAccountRecoveryReplacementChallengeRequest(
+      challengeId: _mutationId7,
+      expectedGeneration: 2,
+      expectedKeyEpoch: 2,
+      expectedMembershipManifestDigest: manifestDigest,
+      expectedMembershipOperationId: _mutationId4,
+      dataGeneration: 2,
+      dataKeyEpoch: 2,
+      sourceRekeyOperationId: _mutationId5,
+      sourceCompletionProofDigest: completionProofDigest,
+    );
+    final responseData = <String, Object?>{
+      'result': 'created',
+      'protocolVersion': e2eeAccountRecoveryProtocolVersion,
+      'challengeId': _mutationId7,
+      'attemptId': _attemptId1,
+      'requestDigest': _encodedBytes(32, 0x64),
+      'challengeFrame': _encodedBytes(
+        e2eeAccountRecoveryReplacementChallengeFrameBytes,
+        0x65,
+      ),
+      'sealedNonce': _encodedBytes(e2eeAccountRecoverySealedNonceBytes, 0x66),
+      'deviceState': <String, Object?>{
+        'keyVersion': 1,
+        'signingPublicKey': _encodedBytes(32, 0x67),
+        'keyAgreementPublicKey': _encodedBytes(32, 0x68),
+      },
+      'securityState': <String, Object?>{
+        'generation': 2,
+        'keyEpoch': 2,
+        'membershipManifest': _encodedData(manifest),
+        'membershipManifestDigest': _encodedData(manifestDigest),
+        'membershipOperationId': _mutationId4,
+        'recoveryPublicKeyVersion': 1,
+        'recoveryPublicKey': _encodedBytes(32, 0x69),
+        'recoveryCapsuleVersion': 2,
+        'recoveryCapsule': _encodedData(capsule),
+        'recoveryCapsuleDigest': _encodedData(capsuleDigest),
+      },
+      'dataState': <String, Object?>{
+        'phase': 'ready',
+        'dataGeneration': 2,
+        'dataKeyEpoch': 2,
+        'sourceRekeyOperationId': _mutationId5,
+      },
+      'sourceCompletion': <String, Object?>{
+        'proofVersion': 2,
+        'operationId': _mutationId5,
+        'issuerDeviceId': _deviceId1,
+        'sourceDataGeneration': 1,
+        'targetDataGeneration': 2,
+        'sourceKeyEpoch': 1,
+        'targetKeyEpoch': 2,
+        'sourceSnapshotRoot': _encodedBytes(32, 0x70),
+        'sourceRecordCount': 0,
+        'sourceAttachmentCount': 0,
+        'sourceMaximumChangeSeq': 0,
+        'sourceRecordCursorEnd': null,
+        'sourceAttachmentCursorEnd': null,
+        'membershipGeneration': 2,
+        'membershipManifestDigest': _encodedData(manifestDigest),
+        'stagedRecordCount': 0,
+        'stagedAttachmentCount': 0,
+        'stagedCiphertextSetDigest': _encodedBytes(32, 0x71),
+        'proofFrame': _encodedBytes(270, 0x72),
+        'proofDigest': _encodedData(completionProofDigest),
+        'signature': _encodedBytes(64, 0x73),
+        'finalizedAt': '2026-08-01T01:30:00.000Z',
+      },
+      'expiresAt': '2026-08-01T02:00:00.000Z',
+    };
+    var responseIndex = 0;
+    final receivedBodies = <CloudSyncJsonMap>[];
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final subscription = server.listen((httpRequest) async {
+      expect(httpRequest.method, 'POST');
+      expect(
+        httpRequest.uri.path,
+        '/api/auth/account-recovery/replacement-challenge/create',
+      );
+      expect(
+        httpRequest.headers.value(HttpHeaders.authorizationHeader),
+        'Bearer ${_dataRekeyRecoveryToken.value}',
+      );
+      receivedBodies.add(
+        copyCloudSyncJsonMap(
+          jsonDecode(await utf8.decoder.bind(httpRequest).join()),
+        ),
+      );
+      final emitted = Map<String, Object?>.of(responseData);
+      if (responseIndex++ == 1) {
+        emitted['sourceCompletion'] = <String, Object?>{
+          ...copyCloudSyncJsonMap(responseData['sourceCompletion']),
+          'issuerDeviceId': _deviceId2,
+        };
+      }
+      await _writeJsonResponse(httpRequest, <String, Object?>{'data': emitted});
+    });
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await subscription.cancel();
+      await server.close(force: true);
+    });
+
+    final challenge = await client.createReplacementChallenge(
+      recoveryToken: _dataRekeyRecoveryToken,
+      expectedAttemptId: _attemptId1,
+      expectedDeviceId: _deviceId1,
+      request: request,
+    );
+    expect(
+      challenge.result,
+      E2eeAccountRecoveryReplacementChallengeResult.created,
+    );
+    expect(challenge.membershipManifest, manifest);
+    expect(challenge.sourceCompletion.proofDigest, completionProofDigest);
+    expect(receivedBodies.single, <String, Object?>{
+      'protocolVersion': e2eeAccountRecoveryProtocolVersion,
+      'challengeId': _mutationId7,
+      'expectedGeneration': 2,
+      'expectedKeyEpoch': 2,
+      'expectedMembershipManifestDigest': _encodedData(manifestDigest),
+      'expectedMembershipOperationId': _mutationId4,
+      'dataGeneration': 2,
+      'dataKeyEpoch': 2,
+      'sourceRekeyOperationId': _mutationId5,
+      'sourceCompletionProofDigest': _encodedData(completionProofDigest),
+    });
+
+    await expectLater(
+      client.createReplacementChallenge(
+        recoveryToken: _dataRekeyRecoveryToken,
+        expectedAttemptId: _attemptId1,
+        expectedDeviceId: _deviceId1,
+        request: request,
+      ),
+      throwsA(
+        isA<CloudSyncException>().having(
+          (error) => error.kind,
+          'kind',
+          CloudSyncFailureKind.invalidResponse,
+        ),
+      ),
+    );
+  });
+
   test('账户恢复 resume 与 replacement 提交使用稳定协议并严格绑定回执', () async {
     final expectedManifest = _filledBytes(
       cloudSyncMembershipManifestMinimumBytes,

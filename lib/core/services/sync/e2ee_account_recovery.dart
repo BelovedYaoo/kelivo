@@ -9,6 +9,7 @@ import 'cloud_sync_types.dart';
 
 const e2eeAccountRecoveryProtocolVersion = 1;
 const e2eeAccountRecoveryChallengeFrameBytes = 316;
+const e2eeAccountRecoveryReplacementChallengeFrameBytes = 376;
 const e2eeAccountRecoverySealedNonceBytes = 100;
 const e2eeAccountRecoveryNonceProofBytes = 32;
 const e2eeAccountRecoveryTrustSignatureBytes = 64;
@@ -23,6 +24,8 @@ final _recoveryTokenPattern = RegExp(r'^kelivo_recovery_[A-Za-z0-9_-]{43}$');
 enum E2eeAccountRecoveryDataPhase { ready, rekeyPending }
 
 enum E2eeAccountRecoveryAuthorizationResult { authorized, replayed }
+
+enum E2eeAccountRecoveryReplacementChallengeResult { created, replayed }
 
 enum E2eeAccountRecoveryRemoteStatus {
   authorized,
@@ -318,6 +321,283 @@ final class E2eeAccountRecoveryChallenge {
   final Uint8List recoveryCapsule;
   final Uint8List recoveryCapsuleDigest;
   final E2eeAccountRecoveryDataState dataState;
+  final DateTime expiresAt;
+}
+
+final class E2eeAccountRecoveryReplacementChallengeRequest {
+  factory E2eeAccountRecoveryReplacementChallengeRequest({
+    required String challengeId,
+    required int expectedGeneration,
+    required int expectedKeyEpoch,
+    required Uint8List expectedMembershipManifestDigest,
+    required String expectedMembershipOperationId,
+    required int dataGeneration,
+    required int dataKeyEpoch,
+    required String sourceRekeyOperationId,
+    required Uint8List sourceCompletionProofDigest,
+  }) {
+    final checkedKeyEpoch = _positiveUint32(
+      expectedKeyEpoch,
+      'expectedKeyEpoch',
+    );
+    final checkedDataKeyEpoch = _positiveUint32(dataKeyEpoch, 'dataKeyEpoch');
+    if (checkedDataKeyEpoch != checkedKeyEpoch) {
+      throw const FormatException('账户恢复替换 challenge 数据代次与安全代次不一致');
+    }
+    return E2eeAccountRecoveryReplacementChallengeRequest._(
+      challengeId: _canonicalUuid(challengeId, 'challengeId'),
+      expectedGeneration: _positiveInt32(
+        expectedGeneration,
+        'expectedGeneration',
+      ),
+      expectedKeyEpoch: checkedKeyEpoch,
+      expectedMembershipManifestDigest: _fixedBytes(
+        expectedMembershipManifestDigest,
+        cloudSyncMembershipManifestDigestBytes,
+        'expectedMembershipManifestDigest',
+      ),
+      expectedMembershipOperationId: _canonicalUuid(
+        expectedMembershipOperationId,
+        'expectedMembershipOperationId',
+      ),
+      dataGeneration: _positiveInt32(dataGeneration, 'dataGeneration'),
+      dataKeyEpoch: checkedDataKeyEpoch,
+      sourceRekeyOperationId: _canonicalUuid(
+        sourceRekeyOperationId,
+        'sourceRekeyOperationId',
+      ),
+      sourceCompletionProofDigest: _fixedBytes(
+        sourceCompletionProofDigest,
+        cloudSyncMembershipManifestDigestBytes,
+        'sourceCompletionProofDigest',
+      ),
+    );
+  }
+
+  const E2eeAccountRecoveryReplacementChallengeRequest._({
+    required this.challengeId,
+    required this.expectedGeneration,
+    required this.expectedKeyEpoch,
+    required this.expectedMembershipManifestDigest,
+    required this.expectedMembershipOperationId,
+    required this.dataGeneration,
+    required this.dataKeyEpoch,
+    required this.sourceRekeyOperationId,
+    required this.sourceCompletionProofDigest,
+  });
+
+  final String challengeId;
+  final int expectedGeneration;
+  final int expectedKeyEpoch;
+  final Uint8List expectedMembershipManifestDigest;
+  final String expectedMembershipOperationId;
+  final int dataGeneration;
+  final int dataKeyEpoch;
+  final String sourceRekeyOperationId;
+  final Uint8List sourceCompletionProofDigest;
+}
+
+final class E2eeAccountRecoveryReplacementChallenge {
+  factory E2eeAccountRecoveryReplacementChallenge({
+    required E2eeAccountRecoveryReplacementChallengeResult result,
+    required String challengeId,
+    required String attemptId,
+    required Uint8List requestDigest,
+    required Uint8List challengeFrame,
+    required Uint8List sealedNonce,
+    required int deviceKeyVersion,
+    required Uint8List deviceSigningPublicKey,
+    required Uint8List deviceKeyAgreementPublicKey,
+    required int securityGeneration,
+    required int keyEpoch,
+    required Uint8List membershipManifest,
+    required Uint8List membershipManifestDigest,
+    required String membershipOperationId,
+    required int recoveryPublicKeyVersion,
+    required Uint8List recoveryPublicKey,
+    required int recoveryCapsuleVersion,
+    required Uint8List recoveryCapsule,
+    required Uint8List recoveryCapsuleDigest,
+    required int dataGeneration,
+    required int dataKeyEpoch,
+    required String sourceRekeyOperationId,
+    required CloudSyncDataRekeyCompletion sourceCompletion,
+    required DateTime expiresAt,
+  }) {
+    final manifest = _rangedBytes(
+      membershipManifest,
+      minimum: cloudSyncMembershipManifestMinimumBytes,
+      maximum: cloudSyncMembershipManifestMaximumBytes,
+      field: 'membershipManifest',
+    );
+    final manifestDigest = _fixedBytes(
+      membershipManifestDigest,
+      cloudSyncMembershipManifestDigestBytes,
+      'membershipManifestDigest',
+    );
+    if (!_sameBytes(
+      Uint8List.fromList(sha256.convert(manifest).bytes),
+      manifestDigest,
+    )) {
+      throw const FormatException('账户恢复替换 challenge 成员清单摘要不一致');
+    }
+    final capsule = _rangedBytes(
+      recoveryCapsule,
+      minimum: 1,
+      maximum: cloudSyncRecoveryCapsuleMaximumBytes,
+      field: 'recoveryCapsule',
+    );
+    final capsuleDigest = _fixedBytes(
+      recoveryCapsuleDigest,
+      cloudSyncMembershipManifestDigestBytes,
+      'recoveryCapsuleDigest',
+    );
+    if (!_sameBytes(
+      Uint8List.fromList(sha256.convert(capsule).bytes),
+      capsuleDigest,
+    )) {
+      throw const FormatException('账户恢复替换 challenge capsule 摘要不一致');
+    }
+    final checkedSecurityGeneration = _positiveInt32(
+      securityGeneration,
+      'securityGeneration',
+    );
+    final checkedKeyEpoch = _positiveUint32(keyEpoch, 'keyEpoch');
+    final checkedDataGeneration = _positiveInt32(
+      dataGeneration,
+      'dataGeneration',
+    );
+    final checkedDataKeyEpoch = _positiveUint32(dataKeyEpoch, 'dataKeyEpoch');
+    final checkedSourceRekeyOperationId = _canonicalUuid(
+      sourceRekeyOperationId,
+      'sourceRekeyOperationId',
+    );
+    if (checkedDataKeyEpoch != checkedKeyEpoch ||
+        sourceCompletion.operationId != checkedSourceRekeyOperationId ||
+        sourceCompletion.targetDataGeneration != checkedDataGeneration ||
+        sourceCompletion.targetKeyEpoch != checkedDataKeyEpoch ||
+        sourceCompletion.membershipGeneration != checkedSecurityGeneration ||
+        !_sameBytes(
+          sourceCompletion.membershipManifestDigest,
+          manifestDigest,
+        )) {
+      throw const FormatException('账户恢复替换 challenge 完成证明与安全状态不一致');
+    }
+    final checkedExpiresAt = expiresAt.toUtc();
+    if (checkedExpiresAt.millisecondsSinceEpoch <= 0) {
+      throw const FormatException('账户恢复替换 challenge 过期时间无效');
+    }
+    return E2eeAccountRecoveryReplacementChallenge._(
+      result: result,
+      challengeId: _canonicalUuid(challengeId, 'challengeId'),
+      attemptId: _canonicalUuid(attemptId, 'attemptId'),
+      requestDigest: _fixedBytes(
+        requestDigest,
+        cloudSyncMembershipManifestDigestBytes,
+        'requestDigest',
+      ),
+      challengeFrame: _fixedBytes(
+        challengeFrame,
+        e2eeAccountRecoveryReplacementChallengeFrameBytes,
+        'challengeFrame',
+      ),
+      sealedNonce: _fixedBytes(
+        sealedNonce,
+        e2eeAccountRecoverySealedNonceBytes,
+        'sealedNonce',
+      ),
+      deviceKeyVersion: _positiveInt32(deviceKeyVersion, 'deviceKeyVersion'),
+      deviceSigningPublicKey: _fixedBytes(
+        deviceSigningPublicKey,
+        cloudSyncDevicePublicKeyBytes,
+        'deviceSigningPublicKey',
+      ),
+      deviceKeyAgreementPublicKey: _fixedBytes(
+        deviceKeyAgreementPublicKey,
+        cloudSyncDevicePublicKeyBytes,
+        'deviceKeyAgreementPublicKey',
+      ),
+      securityGeneration: checkedSecurityGeneration,
+      keyEpoch: checkedKeyEpoch,
+      membershipManifest: manifest,
+      membershipManifestDigest: manifestDigest,
+      membershipOperationId: _canonicalUuid(
+        membershipOperationId,
+        'membershipOperationId',
+      ),
+      recoveryPublicKeyVersion: _positiveInt32(
+        recoveryPublicKeyVersion,
+        'recoveryPublicKeyVersion',
+      ),
+      recoveryPublicKey: _fixedBytes(
+        recoveryPublicKey,
+        cloudSyncRecoveryPublicKeyBytes,
+        'recoveryPublicKey',
+      ),
+      recoveryCapsuleVersion: _positiveInt32(
+        recoveryCapsuleVersion,
+        'recoveryCapsuleVersion',
+      ),
+      recoveryCapsule: capsule,
+      recoveryCapsuleDigest: capsuleDigest,
+      dataGeneration: checkedDataGeneration,
+      dataKeyEpoch: checkedDataKeyEpoch,
+      sourceRekeyOperationId: checkedSourceRekeyOperationId,
+      sourceCompletion: sourceCompletion,
+      expiresAt: checkedExpiresAt,
+    );
+  }
+
+  const E2eeAccountRecoveryReplacementChallenge._({
+    required this.result,
+    required this.challengeId,
+    required this.attemptId,
+    required this.requestDigest,
+    required this.challengeFrame,
+    required this.sealedNonce,
+    required this.deviceKeyVersion,
+    required this.deviceSigningPublicKey,
+    required this.deviceKeyAgreementPublicKey,
+    required this.securityGeneration,
+    required this.keyEpoch,
+    required this.membershipManifest,
+    required this.membershipManifestDigest,
+    required this.membershipOperationId,
+    required this.recoveryPublicKeyVersion,
+    required this.recoveryPublicKey,
+    required this.recoveryCapsuleVersion,
+    required this.recoveryCapsule,
+    required this.recoveryCapsuleDigest,
+    required this.dataGeneration,
+    required this.dataKeyEpoch,
+    required this.sourceRekeyOperationId,
+    required this.sourceCompletion,
+    required this.expiresAt,
+  });
+
+  final E2eeAccountRecoveryReplacementChallengeResult result;
+  final String challengeId;
+  final String attemptId;
+  final Uint8List requestDigest;
+  final Uint8List challengeFrame;
+  final Uint8List sealedNonce;
+  final int deviceKeyVersion;
+  final Uint8List deviceSigningPublicKey;
+  final Uint8List deviceKeyAgreementPublicKey;
+  final int securityGeneration;
+  final int keyEpoch;
+  final Uint8List membershipManifest;
+  final Uint8List membershipManifestDigest;
+  final String membershipOperationId;
+  final int recoveryPublicKeyVersion;
+  final Uint8List recoveryPublicKey;
+  final int recoveryCapsuleVersion;
+  final Uint8List recoveryCapsule;
+  final Uint8List recoveryCapsuleDigest;
+  final int dataGeneration;
+  final int dataKeyEpoch;
+  final String sourceRekeyOperationId;
+  final CloudSyncDataRekeyCompletion sourceCompletion;
   final DateTime expiresAt;
 }
 
@@ -732,6 +1012,13 @@ abstract interface class E2eeAccountRecoveryTransport {
     required Uint8List trustSignature,
   });
 
+  Future<E2eeAccountRecoveryReplacementChallenge> createReplacementChallenge({
+    required CloudSyncAccountRecoveryToken recoveryToken,
+    required String expectedAttemptId,
+    required String expectedDeviceId,
+    required E2eeAccountRecoveryReplacementChallengeRequest request,
+  });
+
   Future<E2eeAccountRecoveryCommitReceipt> commitRecoveryResume({
     required CloudSyncAccountRecoveryToken recoveryToken,
     required E2eeAccountRecoveryResumeCommit request,
@@ -819,6 +1106,19 @@ abstract interface class E2eeAccountRecoveryProofCore {
     required String expectedDeviceId,
     required Uint8List expectedRequestDigest,
     required DateTime expectedExpiresAt,
+  });
+
+  /// 第二挑战必须连同第一轮 data-rekey 完成证明交给 Native 验证；
+  /// Dart 只能获得提交所需 proof，不能自行重建或替换挑战绑定。
+  Future<E2eeAccountRecoveryProof> verifyReplacementChallengeAndCreateProof({
+    required Uint8List recoveryMedia,
+    required Uint8List recoveryPassphrase,
+    required Uint8List serviceOriginSha256,
+    required List<Uint8List> membershipHistory,
+    required Uint8List sourceCapsule,
+    required E2eeAccountRecoveryReplacementChallenge challenge,
+    required Uint8List recoveryTokenDigest,
+    required String expectedDeviceId,
   });
 }
 

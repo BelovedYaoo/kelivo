@@ -1264,6 +1264,16 @@ final class _FakeRecoveryTransport implements E2eeAccountRecoveryTransport {
   }
 
   @override
+  Future<E2eeAccountRecoveryReplacementChallenge> createReplacementChallenge({
+    required CloudSyncAccountRecoveryToken recoveryToken,
+    required String expectedAttemptId,
+    required String expectedDeviceId,
+    required E2eeAccountRecoveryReplacementChallengeRequest request,
+  }) {
+    throw StateError('授权测试不应创建恢复替换 challenge');
+  }
+
+  @override
   Future<E2eeAccountRecoveryCommitReceipt> commitRecoveryResume({
     required CloudSyncAccountRecoveryToken recoveryToken,
     required E2eeAccountRecoveryResumeCommit request,
@@ -1331,6 +1341,20 @@ final class _FakeRecoveryProofCore implements E2eeAccountRecoveryProofCore {
       nonceProof: _bytes(32, 0x81),
       trustSignature: _bytes(64, 0x82),
     );
+  }
+
+  @override
+  Future<E2eeAccountRecoveryProof> verifyReplacementChallengeAndCreateProof({
+    required Uint8List recoveryMedia,
+    required Uint8List recoveryPassphrase,
+    required Uint8List serviceOriginSha256,
+    required List<Uint8List> membershipHistory,
+    required Uint8List sourceCapsule,
+    required E2eeAccountRecoveryReplacementChallenge challenge,
+    required Uint8List recoveryTokenDigest,
+    required String expectedDeviceId,
+  }) {
+    throw StateError('授权测试不应验证恢复替换 challenge');
   }
 }
 
