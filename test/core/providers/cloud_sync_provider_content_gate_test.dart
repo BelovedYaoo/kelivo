@@ -4759,8 +4759,12 @@ void main() {
         keys: const <SyncEntityKey>[
           SyncEntityKey(entityType: 'message', entityId: 'rollback-message'),
         ],
-        targetRevisionId: 'rollback-revision',
-        attachments: materialized,
+        targets: <StructuredMessageAttachmentSyncTarget>[
+          StructuredMessageAttachmentSyncTarget(
+            targetRevisionId: 'rollback-revision',
+            attachments: materialized,
+          ),
+        ],
         targetWasPersisted: (_) => true,
         write: () => throw StateError('rollback-message-write'),
       ),
@@ -6040,8 +6044,7 @@ final class _RollbackAttachmentSyncWriteExecutor
   @override
   Future<T> runLocalBatchWithMessageAttachments<T>({
     required Iterable<SyncEntityKey> keys,
-    required String targetRevisionId,
-    required Iterable<ChatMessageAttachment> attachments,
+    required Iterable<StructuredMessageAttachmentSyncTarget> targets,
     required bool Function(T result) targetWasPersisted,
     required Future<T> Function() write,
   }) async {

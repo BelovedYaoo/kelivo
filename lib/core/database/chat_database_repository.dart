@@ -37,6 +37,19 @@ typedef ChatDatabaseSnapshotInfo = ({
   int messageCount,
 });
 
+typedef ChatDatabaseRestorePreparation = ({
+  ChatDatabaseSnapshotInfo sourceInfo,
+  ChatDatabaseSnapshotInfo preparedInfo,
+  bool sourceWasPlaintext,
+});
+
+typedef ChatDatabaseBackupData = ({
+  List<Conversation> conversations,
+  List<ChatMessage> messages,
+  Map<String, List<Map<String, dynamic>>> toolEventsByMessageId,
+  Map<String, String> geminiSignaturesByMessageId,
+});
+
 typedef InstalledChatDatabaseInfo = ({int schemaVersion, String? databaseId});
 
 typedef PersistedChatTurn = ({
@@ -453,21 +466,19 @@ class ChatDatabaseRepository {
       final source = sqlite.sqlite3.open(sourcePath);
       try {
         cipher.apply(source, createSlotIfMissing: false);
-        source.execute('PRAGMA query_only = ON;');
-        final destination = sqlite.sqlite3.open(destinationPath);
+        initialInfo = _validateRawSnapshot(source);
+        await destinationFile.create();
+        source.execute("ATTACH DATABASE ? AS portable_snapshot KEY '';", [
+          destinationPath,
+        ]);
         try {
-          cipher.apply(destination, createSlotIfMissing: false);
-          final pageSizeRows = source.select('PRAGMA page_size;');
-          final pageSize = int.parse(
-            pageSizeRows.first.values.first.toString(),
+          source.select("SELECT sqlcipher_export('portable_snapshot');");
+          source.execute(
+            'PRAGMA portable_snapshot.user_version = '
+            '${initialInfo.schemaVersion};',
           );
-          final pagesPerStep = (8 * 1024 * 1024 ~/ pageSize).clamp(1, 1 << 20);
-          await source.backup(destination, nPage: pagesPerStep).drain<void>();
-          initialInfo = _validateRawSnapshot(destination);
-          destination.execute('PRAGMA wal_checkpoint(TRUNCATE);');
-          destination.select('PRAGMA journal_mode = DELETE;');
         } finally {
-          destination.close();
+          source.execute('DETACH DATABASE portable_snapshot;');
         }
       } finally {
         source.close();
@@ -476,7 +487,6 @@ class ChatDatabaseRepository {
       await _deleteDatabaseSidecars(destinationFile);
       final reopened = sqlite.sqlite3.open(destinationPath);
       try {
-        cipher.apply(reopened, createSlotIfMissing: false);
         final reopenedInfo = _validateRawSnapshot(reopened);
         if (reopenedInfo != initialInfo) {
           throw StateError('snapshot_reopen_mismatch');
@@ -495,6 +505,14 @@ class ChatDatabaseRepository {
   static Future<ChatDatabaseSnapshotInfo> prepareSnapshotForRestore(
     File snapshotFile, {
     required DatabaseCipher cipher,
+  }) async => (await prepareBackupSnapshotForRestore(
+    snapshotFile,
+    cipher: cipher,
+  )).preparedInfo;
+
+  static Future<ChatDatabaseRestorePreparation> prepareBackupSnapshotForRestore(
+    File snapshotFile, {
+    required DatabaseCipher cipher,
   }) async {
     if (!await snapshotFile.exists()) {
       throw FileSystemException(
@@ -502,6 +520,11 @@ class ChatDatabaseRepository {
         snapshotFile.path,
       );
     }
+
+    final plaintextSourceInfo = await _materializeEncryptedRestoreCandidate(
+      snapshotFile,
+      cipher: cipher,
+    );
 
     final database = sqlite.sqlite3.open(snapshotFile.absolute.path);
     late final ChatDatabaseSnapshotInfo initialInfo;
@@ -544,7 +567,409 @@ class ChatDatabaseRepository {
     if (reopenedInfo != initialInfo) {
       throw StateError('snapshot_reopen_mismatch');
     }
-    return initialInfo;
+    return (
+      sourceInfo: plaintextSourceInfo ?? initialInfo,
+      preparedInfo: initialInfo,
+      sourceWasPlaintext: plaintextSourceInfo != null,
+    );
+  }
+
+  static Future<ChatDatabaseSnapshotInfo?>
+  _materializeEncryptedRestoreCandidate(
+    File snapshotFile, {
+    required DatabaseCipher cipher,
+  }) async {
+    if (!await _hasPlaintextSqliteHeader(snapshotFile)) return null;
+
+    final sourcePath = snapshotFile.absolute.path;
+    final candidate = File('$sourcePath.encrypted-${const Uuid().v4()}');
+    await _deleteDatabaseFamily(candidate);
+    try {
+      final source = sqlite.sqlite3.open(sourcePath);
+      late final ChatDatabaseSnapshotInfo sourceInfo;
+      try {
+        switch (source.userVersion) {
+          case AppDatabase.currentSchemaVersion:
+            sourceInfo = _validateRawSnapshot(source);
+            await candidate.create();
+            cipher.attachExisting(
+              source,
+              databaseFile: candidate,
+              databaseName: 'encrypted_candidate',
+            );
+            try {
+              source.select("SELECT sqlcipher_export('encrypted_candidate');");
+              source.execute(
+                'PRAGMA encrypted_candidate.user_version = '
+                '${sourceInfo.schemaVersion};',
+              );
+            } finally {
+              source.execute('DETACH DATABASE encrypted_candidate;');
+            }
+            break;
+          case 12:
+            sourceInfo = _validateLegacySchema12Snapshot(source);
+            await _createLegacySchema12Candidate(
+              source: source,
+              candidate: candidate,
+              cipher: cipher,
+            );
+            break;
+          default:
+            throw StateError('database_schema_version');
+        }
+      } finally {
+        source.close();
+      }
+
+      await _deleteDatabaseSidecars(candidate);
+      final reopened = sqlite.sqlite3.open(
+        candidate.path,
+        mode: sqlite.OpenMode.readOnly,
+      );
+      try {
+        cipher.apply(reopened, createSlotIfMissing: false);
+        final candidateInfo = _validateRawSnapshot(reopened);
+        if (candidateInfo.conversationCount != sourceInfo.conversationCount ||
+            candidateInfo.messageCount != sourceInfo.messageCount ||
+            (sourceInfo.schemaVersion == AppDatabase.currentSchemaVersion &&
+                candidateInfo != sourceInfo)) {
+          throw StateError('snapshot_conversion_mismatch');
+        }
+      } finally {
+        reopened.close();
+      }
+      await _deleteDatabaseSidecars(candidate);
+
+      await snapshotFile.delete();
+      await candidate.rename(sourcePath);
+      return sourceInfo;
+    } catch (_) {
+      await _deleteDatabaseFamily(candidate);
+      rethrow;
+    }
+  }
+
+  static ChatDatabaseSnapshotInfo _validateLegacySchema12Snapshot(
+    sqlite.Database database,
+  ) {
+    final integrityRows = database.select('PRAGMA integrity_check;');
+    if (integrityRows.length != 1 ||
+        integrityRows.single.values.single != 'ok') {
+      throw StateError('integrity_check');
+    }
+    if (database.select('PRAGMA foreign_key_check;').isNotEmpty) {
+      throw StateError('foreign_key_check');
+    }
+    if (database.userVersion != 12) {
+      throw StateError('database_schema_version');
+    }
+
+    const requiredTables = <String>{
+      'conversation_rows',
+      'conversation_mcp_server_rows',
+      'message_rows',
+      'turn_rows',
+      'tool_event_rows',
+      'gemini_thought_signature_rows',
+      'chat_storage_meta_rows',
+      'message_part_rows',
+      'migration_run_rows',
+      'migration_issue_rows',
+      'generation_run_rows',
+      'provider_artifact_rows',
+    };
+    final tables = database
+        .select("SELECT name FROM sqlite_master WHERE type = 'table';")
+        .map((row) => row['name'])
+        .whereType<String>()
+        .toSet();
+    if (!tables.containsAll(requiredTables)) {
+      throw StateError('required_tables');
+    }
+    final hasAssetRows = tables.contains('asset_rows');
+    final hasMessageAssetRows = tables.contains('message_asset_rows');
+    if (hasAssetRows != hasMessageAssetRows) {
+      throw StateError('required_tables');
+    }
+
+    const expectedColumns = <String, List<String>>{
+      'conversation_rows': [
+        'id',
+        'title',
+        'created_at',
+        'updated_at',
+        'is_pinned',
+        'assistant_id',
+        'truncate_index',
+        'version_selections_json',
+        'summary',
+        'last_summarized_message_count',
+        'chat_suggestions_json',
+      ],
+      'conversation_mcp_server_rows': [
+        'conversation_id',
+        'server_id',
+        'ordinal',
+      ],
+      'message_rows': [
+        'id',
+        'conversation_id',
+        'role',
+        'content',
+        'timestamp',
+        'model_id',
+        'provider_id',
+        'total_tokens',
+        'is_streaming',
+        'reasoning_text',
+        'reasoning_start_at',
+        'reasoning_finished_at',
+        'translation',
+        'reasoning_segments_json',
+        'group_id',
+        'turn_id',
+        'generation_status',
+        'version',
+        'prompt_tokens',
+        'completion_tokens',
+        'cached_tokens',
+        'duration_ms',
+        'message_order',
+      ],
+      'asset_rows': [
+        'id',
+        'content_hash',
+        'path',
+        'byte_size',
+        'width',
+        'height',
+        'thumbnail_path',
+        'created_at',
+        'last_referenced_at',
+      ],
+      'message_asset_rows': [
+        'conversation_id',
+        'revision_id',
+        'asset_id',
+        'kind',
+      ],
+      'turn_rows': ['id', 'conversation_id', 'created_at'],
+      'tool_event_rows': ['message_id', 'events_json'],
+      'gemini_thought_signature_rows': ['message_id', 'signature'],
+      'message_part_rows': [
+        'conversation_id',
+        'revision_id',
+        'ordinal',
+        'kind',
+        'payload',
+        'created_at',
+        'updated_at',
+      ],
+      'provider_artifact_rows': [
+        'conversation_id',
+        'revision_id',
+        'kind',
+        'payload',
+        'created_at',
+        'updated_at',
+      ],
+    };
+    for (final entry in expectedColumns.entries) {
+      if (!tables.contains(entry.key)) continue;
+      final actual = database
+          .select('PRAGMA table_info(${entry.key});')
+          .map((row) => row['name'])
+          .whereType<String>()
+          .toList(growable: false);
+      if (!_sameOrderedStrings(actual, entry.value)) {
+        throw StateError('table_schema:${entry.key}');
+      }
+    }
+    if (hasAssetRows) {
+      final invalidAssets = database.select(
+        "SELECT revision_id FROM message_asset_rows WHERE kind NOT IN ('image', 'file') LIMIT 1;",
+      );
+      if (invalidAssets.isNotEmpty) {
+        throw StateError('legacy_message_asset_kind');
+      }
+      final oversizedAssetGroups = database.select(
+        'SELECT revision_id FROM message_asset_rows '
+        'GROUP BY revision_id HAVING COUNT(*) > 32 LIMIT 1;',
+      );
+      if (oversizedAssetGroups.isNotEmpty) {
+        throw StateError('legacy_message_asset_count');
+      }
+      final mismatchedAssetParents = database.select(
+        'SELECT a.revision_id FROM message_asset_rows a '
+        'JOIN message_rows m ON m.id = a.revision_id '
+        'WHERE a.conversation_id != m.conversation_id LIMIT 1;',
+      );
+      if (mismatchedAssetParents.isNotEmpty) {
+        throw StateError('legacy_message_asset_parent');
+      }
+    }
+    return (
+      schemaVersion: 12,
+      conversationCount: _rawTableCount(database, 'conversation_rows'),
+      messageCount: _rawTableCount(database, 'message_rows'),
+    );
+  }
+
+  static Future<void> _createLegacySchema12Candidate({
+    required sqlite.Database source,
+    required File candidate,
+    required DatabaseCipher cipher,
+  }) async {
+    final repository = ChatDatabaseRepository.open(
+      file: candidate,
+      cipher: cipher,
+    );
+    try {
+      await repository.ensureReady();
+    } finally {
+      await repository.close();
+    }
+    await _deleteDatabaseSidecars(candidate);
+
+    source.execute('PRAGMA foreign_keys = ON;');
+    cipher.attachExisting(
+      source,
+      databaseFile: candidate,
+      databaseName: 'encrypted_candidate',
+    );
+    try {
+      source.execute('BEGIN IMMEDIATE;');
+      try {
+        for (final table in const <String>[
+          'conversation_rows',
+          'conversation_mcp_server_rows',
+          'turn_rows',
+        ]) {
+          source.execute(
+            'INSERT INTO encrypted_candidate.$table SELECT * FROM main.$table;',
+          );
+        }
+        source.execute(
+          'INSERT INTO encrypted_candidate.message_rows '
+          'SELECT id, conversation_id, role, content, timestamp, model_id, '
+          'provider_id, total_tokens, 0, reasoning_text, reasoning_start_at, '
+          'reasoning_finished_at, translation, reasoning_segments_json, '
+          'group_id, turn_id, '
+          "CASE WHEN is_streaming != 0 THEN 'interrupted' ELSE generation_status END, "
+          'version, prompt_tokens, completion_tokens, cached_tokens, '
+          'duration_ms, message_order FROM main.message_rows;',
+        );
+        final legacyTables = source
+            .select("SELECT name FROM sqlite_master WHERE type = 'table';")
+            .map((row) => row['name'])
+            .whereType<String>()
+            .toSet();
+        if (legacyTables.contains('asset_rows')) {
+          source.execute(
+            'INSERT INTO encrypted_candidate.asset_rows '
+            'SELECT * FROM main.asset_rows;',
+          );
+          final assetPaths = <String, String>{
+            for (final row in source.select('SELECT id, path FROM asset_rows;'))
+              if (row['id'] case final String id)
+                id: row['path']?.toString() ?? '',
+          };
+          String? previousRevisionId;
+          var ordinal = 0;
+          for (final row in source.select(
+            'SELECT revision_id, asset_id, kind FROM message_asset_rows '
+            'ORDER BY revision_id, rowid;',
+          )) {
+            final revisionId = row['revision_id'] as String;
+            final assetId = row['asset_id'] as String;
+            final kind = row['kind'] as String;
+            if (revisionId != previousRevisionId) {
+              previousRevisionId = revisionId;
+              ordinal = 0;
+            }
+            final displayName = kind == 'file'
+                ? _legacyAttachmentDisplayName(assetPaths[assetId] ?? '')
+                : null;
+            source.execute(
+              'INSERT INTO encrypted_candidate.message_asset_rows '
+              '(revision_id, ordinal, asset_id, kind, display_name, media_type, '
+              'attachment_id, upload_id, chunk_key_epoch, manifest_key_epoch, '
+              'manifest_revision) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL);',
+              [
+                revisionId,
+                ordinal,
+                assetId,
+                kind,
+                displayName,
+                kind == 'file' ? 'application/octet-stream' : null,
+              ],
+            );
+            ordinal++;
+          }
+        }
+        for (final table in const <String>[
+          'tool_event_rows',
+          'gemini_thought_signature_rows',
+          'message_part_rows',
+          'provider_artifact_rows',
+        ]) {
+          source.execute(
+            'INSERT INTO encrypted_candidate.$table SELECT * FROM main.$table;',
+          );
+        }
+        source.execute(
+          'INSERT OR REPLACE INTO encrypted_candidate.chat_storage_meta_rows '
+          '(key, value) VALUES (?, ?);',
+          [ChatStorageMetaKeys.hiveMigrationComplete, 'true'],
+        );
+        source.execute('COMMIT;');
+      } catch (_) {
+        source.execute('ROLLBACK;');
+        rethrow;
+      }
+    } finally {
+      source.execute('DETACH DATABASE encrypted_candidate;');
+    }
+  }
+
+  static String _legacyAttachmentDisplayName(String sourcePath) {
+    final normalized = sourcePath.replaceAll('\\', '/');
+    final name = normalized.split('/').last.trim();
+    if (name.isEmpty || name.length > 255) return 'attachment';
+    return name;
+  }
+
+  static Future<bool> _hasPlaintextSqliteHeader(File databaseFile) async {
+    const sqliteHeader = <int>[
+      0x53,
+      0x51,
+      0x4c,
+      0x69,
+      0x74,
+      0x65,
+      0x20,
+      0x66,
+      0x6f,
+      0x72,
+      0x6d,
+      0x61,
+      0x74,
+      0x20,
+      0x33,
+      0x00,
+    ];
+    final reader = await databaseFile.open();
+    try {
+      final header = await reader.read(sqliteHeader.length);
+      if (header.length != sqliteHeader.length) return false;
+      for (var index = 0; index < sqliteHeader.length; index++) {
+        if (header[index] != sqliteHeader[index]) return false;
+      }
+      return true;
+    } finally {
+      await reader.close();
+    }
   }
 
   static Future<ChatDatabaseSnapshotInfo> inspectPreparedSnapshot(
@@ -599,6 +1024,55 @@ class ChatDatabaseRepository {
       if (inspectionCompleted) {
         await _requireNoDatabaseSidecars(snapshotFile);
       }
+    }
+  }
+
+  static Future<ChatDatabaseBackupData> readPreparedBackupData(
+    File snapshotFile, {
+    required DatabaseCipher cipher,
+  }) async {
+    await inspectPreparedSnapshot(snapshotFile, cipher: cipher);
+    final repository = ChatDatabaseRepository.open(
+      file: snapshotFile,
+      cipher: cipher,
+    );
+    try {
+      await repository.ensureReady();
+      final summaries = await repository.getAllConversationSummaries();
+      final conversations = <Conversation>[];
+      final messages = <ChatMessage>[];
+      for (final summary in summaries) {
+        final conversation = await repository.getConversation(summary.id);
+        if (conversation == null) {
+          throw StateError('backup_conversation_missing');
+        }
+        conversations.add(conversation);
+        final count = await repository.getMessageCount(summary.id);
+        if (count != 0) {
+          messages.addAll(
+            await repository.getMessagesRange(
+              summary.id,
+              start: 0,
+              limit: count,
+            ),
+          );
+        }
+      }
+      final messageIds = messages.map((message) => message.id).toList();
+      return (
+        conversations: List<Conversation>.unmodifiable(conversations),
+        messages: List<ChatMessage>.unmodifiable(messages),
+        toolEventsByMessageId:
+            Map<String, List<Map<String, dynamic>>>.unmodifiable(
+              await repository.getToolEventsForMessages(messageIds),
+            ),
+        geminiSignaturesByMessageId: Map<String, String>.unmodifiable(
+          await repository.getGeminiThoughtSignaturesForMessages(messageIds),
+        ),
+      );
+    } finally {
+      await repository.close();
+      await _deleteDatabaseSidecars(snapshotFile);
     }
   }
 

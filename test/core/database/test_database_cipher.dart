@@ -54,3 +54,34 @@ final class TestDatabaseCipher implements DatabaseCipher {
 }
 
 const testDatabaseCipher = TestDatabaseCipher();
+
+final class TestPlaintextDatabaseCipher implements DatabaseCipher {
+  const TestPlaintextDatabaseCipher();
+
+  @override
+  void apply(sqlite.Database database, {required bool createSlotIfMissing}) {
+    database.select('SELECT count(*) FROM sqlite_master;');
+  }
+
+  @override
+  void attachExisting(
+    sqlite.Database database, {
+    required File databaseFile,
+    required String databaseName,
+  }) {
+    if (!databaseFile.existsSync()) {
+      throw StateError('database_cipher_attach_source_missing');
+    }
+    if (!RegExp(r'^[a-z][a-z0-9_]{0,31}$').hasMatch(databaseName) ||
+        databaseName == 'main' ||
+        databaseName == 'temp') {
+      throw StateError('database_cipher_attach_name');
+    }
+    database.execute('ATTACH DATABASE ? AS "$databaseName" KEY \'\';', [
+      databaseFile.absolute.path,
+    ]);
+    database.select('SELECT count(*) FROM "$databaseName".sqlite_master;');
+  }
+}
+
+const testPlaintextDatabaseCipher = TestPlaintextDatabaseCipher();

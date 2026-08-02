@@ -13,6 +13,16 @@ abstract interface class SyncWriteExecutor {
   });
 }
 
+final class StructuredMessageAttachmentSyncTarget {
+  StructuredMessageAttachmentSyncTarget({
+    required this.targetRevisionId,
+    required Iterable<ChatMessageAttachment> attachments,
+  }) : attachments = List<ChatMessageAttachment>.unmodifiable(attachments);
+
+  final String targetRevisionId;
+  final List<ChatMessageAttachment> attachments;
+}
+
 /// 为账户工作区提供结构化附件的内容落盘与事务上传草稿能力。
 abstract interface class StructuredAttachmentSyncWriteExecutor
     implements SyncWriteExecutor {
@@ -22,8 +32,7 @@ abstract interface class StructuredAttachmentSyncWriteExecutor
 
   Future<T> runLocalBatchWithMessageAttachments<T>({
     required Iterable<SyncEntityKey> keys,
-    required String targetRevisionId,
-    required Iterable<ChatMessageAttachment> attachments,
+    required Iterable<StructuredMessageAttachmentSyncTarget> targets,
     required bool Function(T result) targetWasPersisted,
     required Future<T> Function() write,
   });

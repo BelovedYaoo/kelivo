@@ -13,6 +13,7 @@ import '../../database/database_cipher.dart';
 import '../../database/generation_run.dart';
 import '../../models/chat_message.dart';
 import '../../models/conversation.dart';
+import '../../utils/chat_message_attachment_utils.dart';
 import '../../../utils/sandbox_path_resolver.dart';
 import '../../../utils/app_directories.dart';
 import '../backup/portable_ndjson_v2.dart';
@@ -54,6 +55,18 @@ final class LoadedTimelinePage {
 }
 
 typedef AssetContentHash = Future<String> Function(File file);
+
+typedef BackupAttachmentDirectoryMapping = ({
+  Directory uploadDirectory,
+  Directory imagesDirectory,
+});
+
+typedef _LegacyBackupAttachmentMarker = ({
+  String path,
+  String kind,
+  String? displayName,
+  String? mediaType,
+});
 
 final class LocalMessageAttachmentInput {
   factory LocalMessageAttachmentInput.image({required String path}) {
@@ -403,8 +416,12 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     }
     return executor.runLocalBatchWithMessageAttachments<T>(
       keys: keys,
-      targetRevisionId: targetRevisionId,
-      attachments: prepared,
+      targets: <StructuredMessageAttachmentSyncTarget>[
+        StructuredMessageAttachmentSyncTarget(
+          targetRevisionId: targetRevisionId,
+          attachments: prepared,
+        ),
+      ],
       targetWasPersisted: targetWasPersisted ?? (_) => true,
       write: write,
     );
@@ -645,30 +662,105 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     required Iterable<ChatMessage> messages,
     Iterable<String> toolEventMessageIds = const <String>[],
     Iterable<String> thoughtSignatureMessageIds = const <String>[],
+    Iterable<ChatMessage> localAttachmentMessages = const <ChatMessage>[],
     required Future<T> Function() write,
+    Future<void> Function()? afterCommit,
   }) async {
     if (!_initialized) await init();
+    if (identical(Zone.current[_importBatchZoneKey], this)) return write();
     // 启动清理可能处理同一批资产；导入前先排空，避免文件与数据库归属并发变化。
     final startupMaintenance = _postStartupAssetMaintenanceFuture;
     if (startupMaintenance != null) {
       await startupMaintenance;
     }
-    Future<T> apply() => runNotificationBatch<T>(() async {
-      var committed = false;
+    final conversationList = conversations.toList(growable: false);
+    final messageList = messages.toList(growable: false);
+    final attachmentMessageList = localAttachmentMessages.toList(
+      growable: false,
+    );
+    final keys = <SyncEntityKey>{};
+    if (overwrite) {
+      keys.addAll(await _allPersistedChatSyncKeys());
+    }
+    for (final conversation in conversationList) {
+      keys.add(_conversationKey(conversation.id));
+      keys.addAll(
+        conversation.versionSelections.keys.map(_messageSelectionKey),
+      );
+    }
+    for (final message in messageList) {
+      keys
+        ..add(_turnKey(message.turnId))
+        ..add(_messageKey(message.id))
+        ..add(_toolEventKey(message.id))
+        ..add(_thoughtSignatureKey(message.id));
+    }
+    keys.addAll(toolEventMessageIds.map(_toolEventKey));
+    keys.addAll(thoughtSignatureMessageIds.map(_thoughtSignatureKey));
+
+    Future<T> apply() => _repo.runInTransaction(write);
+    Future<T> runSynchronizedImport() {
+      final executor = _syncWriteExecutor;
+      if (attachmentMessageList.isEmpty ||
+          executor is! StructuredAttachmentSyncWriteExecutor) {
+        return executor.runLocalBatch<T>(keys: keys, write: apply);
+      }
+      return executor.runLocalBatchWithMessageAttachments<T>(
+        keys: keys,
+        targets: <StructuredMessageAttachmentSyncTarget>[
+          for (final message in attachmentMessageList)
+            StructuredMessageAttachmentSyncTarget(
+              targetRevisionId: message.id,
+              attachments: message.attachments,
+            ),
+        ],
+        targetWasPersisted: (_) => true,
+        write: apply,
+      );
+    }
+
+    return runNotificationBatch<T>(() async {
+      var completed = false;
       try {
-        final result = await _repo.runInTransaction(write);
-        committed = true;
+        final result = await runZoned<Future<T>>(
+          runSynchronizedImport,
+          zoneValues: <Object?, Object?>{_importBatchZoneKey: this},
+        );
+        await afterCommit?.call();
+        completed = true;
         return result;
       } finally {
-        if (!committed) await _refreshPersistedCachesAfterRemoteBatch();
+        if (!completed) await _refreshPersistedCachesAfterRemoteBatch();
         notifyListeners();
       }
     });
-    if (identical(Zone.current[_importBatchZoneKey], this)) return write();
-    return runZoned<Future<T>>(
-      apply,
-      zoneValues: <Object?, Object?>{_importBatchZoneKey: this},
-    );
+  }
+
+  Future<Set<SyncEntityKey>> _allPersistedChatSyncKeys() async {
+    final keys = <SyncEntityKey>{};
+    final conversations = await _repo.getAllConversationSummaries();
+    for (final conversation in conversations) {
+      keys.add(_conversationKey(conversation.id));
+      keys.addAll(
+        conversation.versionSelections.keys.map(_messageSelectionKey),
+      );
+      final turns = await _repo.getTurnCreatedAts(conversation.id);
+      keys.addAll(turns.keys.map(_turnKey));
+      final count = await _repo.getMessageCount(conversation.id);
+      if (count == 0) continue;
+      final messages = await _repo.getMessagesRange(
+        conversation.id,
+        start: 0,
+        limit: count,
+      );
+      for (final message in messages) {
+        keys
+          ..add(_messageKey(message.id))
+          ..add(_toolEventKey(message.id))
+          ..add(_thoughtSignatureKey(message.id));
+      }
+    }
+    return keys;
   }
 
   Future<Conversation> upsertConversationFromSync(Conversation incoming) {
@@ -2704,8 +2796,36 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     required List<ChatMessage> messages,
     required Map<String, List<Map<String, dynamic>>> toolEventsByMessageId,
     required Map<String, String> geminiSignaturesByMessageId,
+  }) {
+    return _replaceAllDataFromBackup(
+      conversations: conversations,
+      messages: messages,
+      toolEventsByMessageId: toolEventsByMessageId,
+      geminiSignaturesByMessageId: geminiSignaturesByMessageId,
+    );
+  }
+
+  Future<void> _replaceAllDataFromBackup({
+    required List<Conversation> conversations,
+    required List<ChatMessage> messages,
+    required Map<String, List<Map<String, dynamic>>> toolEventsByMessageId,
+    required Map<String, String> geminiSignaturesByMessageId,
   }) async {
     if (!_initialized) await init();
+
+    final localAttachmentMessages = <ChatMessage>[];
+    if (_syncWriteExecutor is StructuredAttachmentSyncWriteExecutor) {
+      for (final message in messages) {
+        if (message.attachments.isEmpty) continue;
+        final localCount = message.attachments
+            .where((attachment) => !attachment.hasRemoteIdentity)
+            .length;
+        if (localCount != 0 && localCount != message.attachments.length) {
+          throw StateError('backup_mixed_attachment_identity');
+        }
+        if (localCount != 0) localAttachmentMessages.add(message);
+      }
+    }
 
     final nextOrderByConversation = <String, int>{};
     final orderedMessages = <({ChatMessage message, int messageOrder})>[];
@@ -2724,6 +2844,7 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
       messages: messages,
       toolEventMessageIds: toolEventsByMessageId.keys,
       thoughtSignatureMessageIds: geminiSignaturesByMessageId.keys,
+      localAttachmentMessages: localAttachmentMessages,
       write: () async {
         await _repo.replaceBackupData(
           conversations: conversations,
@@ -2731,9 +2852,8 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
           toolEventsByMessageId: toolEventsByMessageId,
           geminiSignaturesByMessageId: geminiSignaturesByMessageId,
         );
-
-        await _resetAfterOverwriteRestore();
       },
+      afterCommit: _resetAfterOverwriteRestore,
     );
   }
 
@@ -2755,8 +2875,293 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
 
   Future<void> restoreDatabaseSnapshot(File snapshotFile) async {
     if (!_initialized) await init();
+    final snapshotPath = snapshotFile.path;
+    final cipher = databaseCipher;
+    await Isolate.run(
+      () => ChatDatabaseRepository.prepareSnapshotForRestore(
+        File(snapshotPath),
+        cipher: cipher,
+      ),
+    );
     await _repo.replaceBackupSnapshot(snapshotFile);
     await _resetAfterOverwriteRestore();
+  }
+
+  Future<void> replaceDatabaseSnapshotFromBackup(
+    File snapshotFile, {
+    BackupAttachmentDirectoryMapping? attachmentDirectories,
+  }) async {
+    if (!_initialized) await init();
+    final snapshotPath = snapshotFile.path;
+    final cipher = databaseCipher;
+    final backup = await Isolate.run(
+      () => ChatDatabaseRepository.readPreparedBackupData(
+        File(snapshotPath),
+        cipher: cipher,
+      ),
+    );
+    final messages = await _prepareImportedBackupMessages(
+      backup.messages,
+      attachmentDirectories: attachmentDirectories,
+    );
+    await _replaceAllDataFromBackup(
+      conversations: backup.conversations,
+      messages: messages,
+      toolEventsByMessageId: backup.toolEventsByMessageId,
+      geminiSignaturesByMessageId: backup.geminiSignaturesByMessageId,
+    );
+  }
+
+  Future<List<ChatMessage>> _prepareImportedBackupMessages(
+    List<ChatMessage> messages, {
+    required BackupAttachmentDirectoryMapping? attachmentDirectories,
+  }) async {
+    final verifyLocalFiles =
+        _syncWriteExecutor is StructuredAttachmentSyncWriteExecutor;
+    final prepared = <ChatMessage>[];
+    for (final message in messages) {
+      final markerParse = _parseLegacyBackupAttachmentMarkers(message.content);
+      if (message.attachments.isEmpty &&
+          markerParse.markers.isEmpty &&
+          markerParse.content == message.content) {
+        prepared.add(message);
+        continue;
+      }
+      final attachments = <ChatMessageAttachment>[];
+      for (final attachment in message.attachments) {
+        final target = attachmentDirectories == null
+            ? File(attachment.path)
+            : _resolveImportedAttachmentPath(
+                attachment.path,
+                attachmentDirectories,
+              );
+        final targetExists =
+            await FileSystemEntity.type(target.path, followLinks: false) ==
+            FileSystemEntityType.file;
+        if ((attachmentDirectories != null &&
+                (!attachment.hasRemoteIdentity || targetExists)) ||
+            (verifyLocalFiles && !attachment.hasRemoteIdentity)) {
+          await _verifyImportedAttachmentFile(target, attachment);
+        }
+        attachments.add(
+          ChatMessageAttachment(
+            assetId: attachment.assetId,
+            path: target.path,
+            contentHash: attachment.contentHash,
+            byteSize: attachment.byteSize,
+            kind: attachment.kind,
+            displayName: attachment.displayName,
+            mediaType: attachment.mediaType,
+            attachmentId: attachment.attachmentId,
+            uploadId: attachment.uploadId,
+            chunkKeyEpoch: attachment.chunkKeyEpoch,
+            manifestKeyEpoch: attachment.manifestKeyEpoch,
+            manifestRevision: attachment.manifestRevision,
+          ),
+        );
+      }
+      for (final marker in markerParse.markers) {
+        final target = attachmentDirectories == null
+            ? File(marker.path)
+            : _resolveImportedAttachmentPath(
+                marker.path,
+                attachmentDirectories,
+              );
+        final existingIndex = attachments.indexWhere(
+          (attachment) => p.equals(attachment.path, target.path),
+        );
+        if (existingIndex >= 0) {
+          final existing = attachments[existingIndex];
+          if (existing.kind != marker.kind) {
+            throw StateError('backup_attachment_marker_kind');
+          }
+          if (marker.kind == 'file') {
+            attachments[existingIndex] = ChatMessageAttachment(
+              assetId: existing.assetId,
+              path: existing.path,
+              contentHash: existing.contentHash,
+              byteSize: existing.byteSize,
+              kind: existing.kind,
+              displayName: marker.displayName,
+              mediaType: marker.mediaType,
+              attachmentId: existing.attachmentId,
+              uploadId: existing.uploadId,
+              chunkKeyEpoch: existing.chunkKeyEpoch,
+              manifestKeyEpoch: existing.manifestKeyEpoch,
+              manifestRevision: existing.manifestRevision,
+            );
+          }
+          continue;
+        }
+        final fileInfo = await _inspectImportedAttachmentFile(target);
+        attachments.add(
+          ChatMessageAttachment(
+            assetId: 'asset_${fileInfo.contentHash}',
+            path: target.path,
+            contentHash: fileInfo.contentHash,
+            byteSize: fileInfo.byteSize,
+            kind: marker.kind,
+            displayName: marker.displayName,
+            mediaType: marker.mediaType,
+          ),
+        );
+      }
+      if (attachments.length > ChatMessage.maximumAttachmentCount) {
+        throw StateError('backup_attachment_count');
+      }
+      prepared.add(
+        message.copyWith(
+          content: markerParse.content,
+          attachments: attachments,
+        ),
+      );
+    }
+    return List<ChatMessage>.unmodifiable(prepared);
+  }
+
+  static ({String content, List<_LegacyBackupAttachmentMarker> markers})
+  _parseLegacyBackupAttachmentMarkers(String raw) {
+    final imagePattern = RegExp(r'\[image:([^\]]+)\]');
+    final filePattern = RegExp(r'\[file:([^|\]]+)\|([^|\]]+)\|([^\]]+)\]');
+    final content = StringBuffer();
+    final markers = <_LegacyBackupAttachmentMarker>[];
+    var index = 0;
+    while (index < raw.length) {
+      final imageMatch = imagePattern.matchAsPrefix(raw, index);
+      if (imageMatch != null) {
+        final path = imageMatch.group(1)?.trim() ?? '';
+        if (path.isEmpty || path.contains('\u0000')) {
+          throw StateError('backup_image_marker');
+        }
+        if (isRemoteInlineImageSource(path)) {
+          content.write(imageMatch.group(0));
+        } else {
+          markers.add((
+            path: path,
+            kind: 'image',
+            displayName: null,
+            mediaType: null,
+          ));
+        }
+        index = imageMatch.end;
+        continue;
+      }
+      final fileMatch = filePattern.matchAsPrefix(raw, index);
+      if (fileMatch != null) {
+        final path = fileMatch.group(1)?.trim() ?? '';
+        final displayName = fileMatch.group(2)?.trim() ?? '';
+        final mediaType = fileMatch.group(3)?.trim() ?? '';
+        if (path.isEmpty ||
+            path.contains('\u0000') ||
+            displayName.isEmpty ||
+            displayName.contains('\u0000') ||
+            displayName.contains('/') ||
+            displayName.contains('\\') ||
+            mediaType.trim() != mediaType ||
+            mediaType.indexOf('/') <= 0 ||
+            mediaType.endsWith('/')) {
+          throw StateError('backup_file_marker');
+        }
+        if (path.startsWith('http://') || path.startsWith('https://')) {
+          content.write('$displayName: $path');
+        } else {
+          markers.add((
+            path: path,
+            kind: 'file',
+            displayName: displayName,
+            mediaType: mediaType,
+          ));
+        }
+        index = fileMatch.end;
+        continue;
+      }
+      content.write(raw[index]);
+      index++;
+    }
+    final normalizedContent = content.toString().trim();
+    return (
+      content: normalizedContent == raw.trim() ? raw : normalizedContent,
+      markers: List<_LegacyBackupAttachmentMarker>.unmodifiable(markers),
+    );
+  }
+
+  static File _resolveImportedAttachmentPath(
+    String sourcePath,
+    BackupAttachmentDirectoryMapping directories,
+  ) {
+    final segments = sourcePath
+        .replaceAll('\\', '/')
+        .split('/')
+        .where((segment) => segment.isNotEmpty)
+        .toList(growable: false);
+    Directory? owner;
+    var rootIndex = -1;
+    for (var index = segments.length - 2; index >= 0; index--) {
+      switch (segments[index].toLowerCase()) {
+        case 'upload':
+          owner = directories.uploadDirectory;
+          rootIndex = index;
+          break;
+        case 'images':
+          owner = directories.imagesDirectory;
+          rootIndex = index;
+          break;
+      }
+      if (owner != null) break;
+    }
+    if (owner == null || rootIndex < 0) {
+      throw StateError('backup_attachment_path_root');
+    }
+    final relativeSegments = segments.sublist(rootIndex + 1);
+    if (relativeSegments.isEmpty ||
+        relativeSegments.any(
+          (segment) =>
+              segment.isEmpty ||
+              segment == '.' ||
+              segment == '..' ||
+              segment.contains('\u0000'),
+        )) {
+      throw StateError('backup_attachment_path_relative');
+    }
+    final ownerPath = p.normalize(p.absolute(owner.path));
+    final target = File(
+      p.normalize(
+        p.absolute(p.joinAll(<String>[ownerPath, ...relativeSegments])),
+      ),
+    );
+    if (!p.isWithin(ownerPath, target.path)) {
+      throw StateError('backup_attachment_path_outside_root');
+    }
+    return target;
+  }
+
+  Future<void> _verifyImportedAttachmentFile(
+    File file,
+    ChatMessageAttachment attachment,
+  ) async {
+    final inspected = await _inspectImportedAttachmentFile(file);
+    if (inspected.byteSize != attachment.byteSize) {
+      throw StateError('backup_attachment_file_size');
+    }
+    if (inspected.contentHash != attachment.contentHash) {
+      throw StateError('backup_attachment_file_hash');
+    }
+  }
+
+  Future<({int byteSize, String contentHash})> _inspectImportedAttachmentFile(
+    File file,
+  ) async {
+    if (await FileSystemEntity.type(file.path, followLinks: false) !=
+        FileSystemEntityType.file) {
+      throw StateError('backup_attachment_file_missing');
+    }
+    final before = await file.stat();
+    final contentHash = await _assetContentHash(file);
+    final after = await file.stat();
+    if (before.size != after.size || before.modified != after.modified) {
+      throw StateError('backup_attachment_file_changed');
+    }
+    return (byteSize: after.size, contentHash: contentHash);
   }
 
   Future<BackupMergeReport> mergeDatabaseSnapshot(File snapshotFile) async {

@@ -81,12 +81,22 @@ final class _RecordingSyncWriteExecutor implements SyncWriteExecutor {
 
 final class _RecordingAttachmentWriteExecutor
     implements StructuredAttachmentSyncWriteExecutor {
+  _RecordingAttachmentWriteExecutor({
+    this.rollbackGateway,
+    this.rollbackDatabaseFile,
+  });
+
+  final ChatDatabaseGateway? rollbackGateway;
+  final File? rollbackDatabaseFile;
   final List<List<ChatMessageAttachment>> materialized =
       <List<ChatMessageAttachment>>[];
   final List<({String revisionId, List<ChatMessageAttachment> attachments})>
   attachmentBatches =
       <({String revisionId, List<ChatMessageAttachment> attachments})>[];
+  final List<Set<SyncEntityKey>> ordinaryKeyBatches = <Set<SyncEntityKey>>[];
+  final List<Set<SyncEntityKey>> attachmentKeyBatches = <Set<SyncEntityKey>>[];
   int ordinaryBatches = 0;
+  bool failAfterWrite = false;
 
   @override
   Future<List<ChatMessageAttachment>> materializeLocalAttachments(
@@ -109,21 +119,40 @@ final class _RecordingAttachmentWriteExecutor
     required Future<T> Function() write,
   }) async {
     ordinaryBatches++;
+    ordinaryKeyBatches.add(Set<SyncEntityKey>.of(keys));
     return write();
   }
 
   @override
   Future<T> runLocalBatchWithMessageAttachments<T>({
     required Iterable<SyncEntityKey> keys,
-    required String targetRevisionId,
-    required Iterable<ChatMessageAttachment> attachments,
+    required Iterable<StructuredMessageAttachmentSyncTarget> targets,
     required bool Function(T result) targetWasPersisted,
     required Future<T> Function() write,
   }) async {
-    attachmentBatches.add((
-      revisionId: targetRevisionId,
-      attachments: List<ChatMessageAttachment>.unmodifiable(attachments),
-    ));
+    attachmentKeyBatches.add(Set<SyncEntityKey>.of(keys));
+    for (final target in targets) {
+      attachmentBatches.add((
+        revisionId: target.targetRevisionId,
+        attachments: target.attachments,
+      ));
+    }
+    if (failAfterWrite) {
+      final gateway = rollbackGateway;
+      final databaseFile = rollbackDatabaseFile;
+      if (gateway == null || databaseFile == null) {
+        throw StateError('rollback-database-missing');
+      }
+      final lease = await gateway.acquire(databaseFile);
+      try {
+        return lease.repository.runInTransaction<T>(() async {
+          await write();
+          throw StateError('attachment-draft-failed');
+        });
+      } finally {
+        await lease.release();
+      }
+    }
     final result = await write();
     targetWasPersisted(result);
     return result;
@@ -163,10 +192,12 @@ void main() {
     Future<String> Function(File)? assetContentHash,
     SyncWriteExecutor syncWriteExecutor =
         const UntrackedSyncWriteExecutor.forTests(),
+    ChatDatabaseGateway? databaseGateway,
   }) {
     final service = ChatService(
       syncWriteExecutor,
-      databaseGateway: ChatDatabaseGateway(cipher: testDatabaseCipher),
+      databaseGateway:
+          databaseGateway ?? ChatDatabaseGateway(cipher: testDatabaseCipher),
       assetContentHash: assetContentHash,
     );
     services.add(service);
@@ -2021,6 +2052,282 @@ void main() {
     await _expectLegacyCloudSyncStateAbsent(tempDir);
   });
 
+  test('覆盖导入同时提交旧实体墓碑与新实体写入意图', () async {
+    final writeExecutor = _RecordingSyncWriteExecutor();
+    final service = createService(syncWriteExecutor: writeExecutor);
+    await service.init();
+    final oldConversation = await service.createConversation(title: 'Old');
+    final oldMessage = await service.addMessage(
+      conversationId: oldConversation.id,
+      role: 'assistant',
+      content: 'old content',
+    );
+    writeExecutor.batches.clear();
+
+    final newConversation = Conversation(
+      id: 'imported-conversation',
+      title: 'Imported',
+    );
+    final newMessage = ChatMessage(
+      id: 'imported-message',
+      conversationId: newConversation.id,
+      turnId: 'imported-turn',
+      role: 'assistant',
+      content: 'new content',
+    );
+    await service.replaceAllDataFromBackup(
+      conversations: <Conversation>[newConversation],
+      messages: <ChatMessage>[newMessage],
+      toolEventsByMessageId: const <String, List<Map<String, dynamic>>>{},
+      geminiSignaturesByMessageId: const <String, String>{},
+    );
+
+    expect(writeExecutor.batches, hasLength(1));
+    final keys = writeExecutor.batches.single;
+    expect(
+      keys,
+      containsAll(<SyncEntityKey>{
+        SyncEntityKey(entityType: 'conversation', entityId: oldConversation.id),
+        SyncEntityKey(entityType: 'turn', entityId: oldMessage.turnId),
+        SyncEntityKey(entityType: 'message', entityId: oldMessage.id),
+        const SyncEntityKey(
+          entityType: 'conversation',
+          entityId: 'imported-conversation',
+        ),
+        const SyncEntityKey(entityType: 'turn', entityId: 'imported-turn'),
+        const SyncEntityKey(
+          entityType: 'message',
+          entityId: 'imported-message',
+        ),
+      }),
+    );
+    expect(service.getConversation(oldConversation.id), isNull);
+    expect(service.getConversation(newConversation.id), isNotNull);
+  });
+
+  test('覆盖导入的本地附件在消息意图前创建上传草稿', () async {
+    final writeExecutor = _RecordingAttachmentWriteExecutor();
+    final service = createService(syncWriteExecutor: writeExecutor);
+    await service.init();
+    final attachmentFile = File('${tempDir.path}/imported-image.png');
+    await attachmentFile.writeAsBytes(const <int>[1, 2, 3], flush: true);
+    const contentHash =
+        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    final conversation = Conversation(
+      id: 'imported-attachment-conversation',
+      title: 'Imported',
+    );
+    final message = ChatMessage(
+      id: 'imported-attachment-message',
+      conversationId: conversation.id,
+      turnId: 'imported-attachment-turn',
+      role: 'assistant',
+      content: 'image',
+      attachments: <ChatMessageAttachment>[
+        ChatMessageAttachment(
+          assetId: 'asset_$contentHash',
+          path: attachmentFile.path,
+          contentHash: contentHash,
+          byteSize: 3,
+          kind: 'image',
+        ),
+      ],
+    );
+
+    await service.replaceAllDataFromBackup(
+      conversations: <Conversation>[conversation],
+      messages: <ChatMessage>[
+        message.copyWith(attachments: const <ChatMessageAttachment>[]),
+      ],
+      toolEventsByMessageId: const <String, List<Map<String, dynamic>>>{},
+      geminiSignaturesByMessageId: const <String, String>{},
+    );
+    writeExecutor
+      ..ordinaryKeyBatches.clear()
+      ..attachmentBatches.clear()
+      ..attachmentKeyBatches.clear();
+
+    await service.replaceAllDataFromBackup(
+      conversations: <Conversation>[conversation],
+      messages: <ChatMessage>[message],
+      toolEventsByMessageId: const <String, List<Map<String, dynamic>>>{},
+      geminiSignaturesByMessageId: const <String, String>{},
+    );
+
+    const messageKey = SyncEntityKey(
+      entityType: 'message',
+      entityId: 'imported-attachment-message',
+    );
+    expect(writeExecutor.ordinaryKeyBatches, isEmpty);
+    expect(writeExecutor.attachmentBatches, hasLength(1));
+    expect(
+      writeExecutor.attachmentBatches.single.revisionId,
+      'imported-attachment-message',
+    );
+    expect(writeExecutor.attachmentKeyBatches.single, contains(messageKey));
+  });
+
+  test('覆盖导入的附件事务提交失败时回滚聊天和缓存', () async {
+    final gateway = ChatDatabaseGateway(cipher: testDatabaseCipher);
+    final writeExecutor = _RecordingAttachmentWriteExecutor(
+      rollbackGateway: gateway,
+      rollbackDatabaseFile: File(
+        p.join(tempDir.path, AppDatabase.databaseFileName),
+      ),
+    );
+    final service = createService(
+      syncWriteExecutor: writeExecutor,
+      databaseGateway: gateway,
+    );
+    await service.init();
+    final oldConversation = await service.createConversation(title: 'Old');
+    writeExecutor
+      ..ordinaryKeyBatches.clear()
+      ..attachmentBatches.clear()
+      ..attachmentKeyBatches.clear()
+      ..failAfterWrite = true;
+
+    ChatMessage attachmentMessage(String id) => ChatMessage(
+      id: id,
+      conversationId: 'imported-conversation',
+      turnId: 'imported-turn',
+      role: 'assistant',
+      content: id,
+      attachments: <ChatMessageAttachment>[
+        ChatMessageAttachment(
+          assetId: 'asset_$id',
+          path: p.join(tempDir.path, '$id.bin'),
+          contentHash: id.endsWith('1')
+              ? 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+              : 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+          byteSize: 1,
+          kind: 'file',
+          displayName: '$id.bin',
+          mediaType: 'application/octet-stream',
+        ),
+      ],
+    );
+
+    await expectLater(
+      service.replaceAllDataFromBackup(
+        conversations: <Conversation>[
+          Conversation(id: 'imported-conversation', title: 'Imported'),
+        ],
+        messages: <ChatMessage>[
+          attachmentMessage('imported-message-1'),
+          attachmentMessage('imported-message-2'),
+        ],
+        toolEventsByMessageId: const <String, List<Map<String, dynamic>>>{},
+        geminiSignaturesByMessageId: const <String, String>{},
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'attachment-draft-failed',
+        ),
+      ),
+    );
+
+    expect(writeExecutor.attachmentBatches, hasLength(2));
+    expect(service.getConversation(oldConversation.id), isNotNull);
+    expect(service.getConversation('imported-conversation'), isNull);
+  });
+
+  test('便携备份附件路径映射到当前工作区并校验文件', () async {
+    const imageContentHash =
+        'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    const fileContentHash =
+        'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
+    final uploadDirectory = await AppDirectories.getUploadDirectory();
+    final imagesDirectory = await AppDirectories.getImagesDirectory();
+    final imageTarget = File(p.join(uploadDirectory.path, 'portable.png'));
+    final fileTarget = File(p.join(uploadDirectory.path, 'legacy.txt'));
+    await imageTarget.writeAsBytes(const <int>[1, 2, 3], flush: true);
+    await fileTarget.writeAsBytes(const <int>[4, 5], flush: true);
+
+    final backupFile = File(p.join(tempDir.path, 'portable-backup.db'));
+    final backupRepository = ChatDatabaseRepository.open(
+      file: backupFile,
+      cipher: testDatabaseCipher,
+    );
+    try {
+      await backupRepository.ensureReady();
+      await backupRepository.putMigrationBatch(
+        conversations: <Conversation>[
+          Conversation(
+            id: 'portable-conversation',
+            title: 'Portable',
+            messageIds: const <String>['portable-message'],
+          ),
+        ],
+        messages: <({ChatMessage message, int messageOrder})>[
+          (
+            message: ChatMessage(
+              id: 'portable-message',
+              conversationId: 'portable-conversation',
+              role: 'assistant',
+              content:
+                  'portable attachment'
+                  r'[file:C:\old-device\workspace\upload\legacy.txt|original.txt|text/plain]'
+                  '\n'
+                  '[file:https://files.example/remote.pdf|remote.pdf|application/pdf]',
+              attachments: <ChatMessageAttachment>[
+                ChatMessageAttachment(
+                  assetId: 'asset_$imageContentHash',
+                  path: r'C:\old-device\workspace\upload\portable.png',
+                  contentHash: imageContentHash,
+                  byteSize: 3,
+                  kind: 'image',
+                ),
+              ],
+            ),
+            messageOrder: 0,
+          ),
+        ],
+        toolEventsByMessageId: const <String, List<Map<String, dynamic>>>{},
+        geminiSignaturesByMessageId: const <String, String>{},
+      );
+      await backupRepository.checkpoint();
+    } finally {
+      await backupRepository.close();
+    }
+    await _deleteDatabaseSidecars(backupFile);
+    await ChatDatabaseRepository.prepareSnapshotForRestore(
+      backupFile,
+      cipher: testDatabaseCipher,
+    );
+
+    final service = createService(
+      assetContentHash: (file) async => file.path.endsWith('portable.png')
+          ? imageContentHash
+          : fileContentHash,
+    );
+    await service.init();
+    await service.replaceDatabaseSnapshotFromBackup(
+      backupFile,
+      attachmentDirectories: (
+        uploadDirectory: uploadDirectory,
+        imagesDirectory: imagesDirectory,
+      ),
+    );
+
+    final restored = (await service.loadMessages(
+      'portable-conversation',
+    )).single;
+    expect(restored.content, startsWith('portable attachment'));
+    expect(restored.content, isNot(contains('[file:')));
+    expect(
+      restored.content,
+      contains('remote.pdf: https://files.example/remote.pdf'),
+    );
+    expect(restored.attachments, hasLength(2));
+    expect(restored.attachments[0].path, imageTarget.path);
+    expect(restored.attachments[1].path, fileTarget.path);
+    expect(restored.attachments[1].displayName, 'original.txt');
+    expect(restored.attachments[1].mediaType, 'text/plain');
+  });
+
   test('删除和清空聊天数据不创建旧同步状态库', () async {
     final service = createService();
     await service.init();
@@ -2054,6 +2361,13 @@ Future<void> _expectLegacyCloudSyncStateAbsent(Directory root) async {
       ).exists(),
       isFalse,
     );
+  }
+}
+
+Future<void> _deleteDatabaseSidecars(File databaseFile) async {
+  for (final suffix in const <String>['-wal', '-shm', '-journal']) {
+    final sidecar = File('${databaseFile.path}$suffix');
+    if (await sidecar.exists()) await sidecar.delete();
   }
 }
 

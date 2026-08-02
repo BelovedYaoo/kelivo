@@ -817,14 +817,24 @@ final class E2eeChatContentRuntime
   @override
   Future<T> runLocalBatchWithMessageAttachments<T>({
     required Iterable<SyncEntityKey> keys,
-    required String targetRevisionId,
-    required Iterable<ChatMessageAttachment> attachments,
+    required Iterable<StructuredMessageAttachmentSyncTarget> targets,
     required bool Function(T result) targetWasPersisted,
     required Future<T> Function() write,
   }) async {
-    final inputs = List<ChatMessageAttachment>.unmodifiable(attachments);
+    final inputs = List<StructuredMessageAttachmentSyncTarget>.unmodifiable(
+      targets,
+    );
     if (inputs.isEmpty) {
       return runLocalBatch<T>(keys: keys, write: write);
+    }
+    final revisionIds = <String>{};
+    for (final input in inputs) {
+      if (input.attachments.isEmpty) {
+        throw StateError('附件消息批次不得为空');
+      }
+      if (!revisionIds.add(input.targetRevisionId)) {
+        throw StateError('附件消息批次不得包含重复目标');
+      }
     }
     await initialize();
     _requireReadyForLocalOperation();
@@ -838,31 +848,33 @@ final class E2eeChatContentRuntime
       }
       final retirements = <_MaterializedAttachmentSourceRetirement>[];
       final drafts = <E2eeAttachmentUploadDraft>[];
-      for (var index = 0; index < inputs.length; index++) {
-        final attachment = inputs[index];
-        if (attachment.hasRemoteIdentity) {
-          throw StateError('本地附件上传草稿不得携带远端身份');
-        }
-        drafts.add(
-          await uploads.prepareDraft(
-            localAssetId: attachment.assetId,
-            targetRevisionId: targetRevisionId,
-            targetOrdinal: index,
-            sourcePath: attachment.path,
-            kind: E2eeAttachmentKind.values.byName(attachment.kind),
-            totalPlaintextBytes: attachment.byteSize,
-            contentSha256: _decodeSha256Hex(attachment.contentHash),
-            displayName: attachment.displayName,
-            mediaType: attachment.mediaType,
-          ),
-        );
-        final retirement = _materializedSourceRetirements[attachment];
-        if (retirement != null &&
-            !retirements.any(
-              (existing) =>
-                  p.equals(existing.sourcePath, retirement.sourcePath),
-            )) {
-          retirements.add(retirement);
+      for (final input in inputs) {
+        for (var index = 0; index < input.attachments.length; index++) {
+          final attachment = input.attachments[index];
+          if (attachment.hasRemoteIdentity) {
+            throw StateError('本地附件上传草稿不得携带远端身份');
+          }
+          drafts.add(
+            await uploads.prepareDraft(
+              localAssetId: attachment.assetId,
+              targetRevisionId: input.targetRevisionId,
+              targetOrdinal: index,
+              sourcePath: attachment.path,
+              kind: E2eeAttachmentKind.values.byName(attachment.kind),
+              totalPlaintextBytes: attachment.byteSize,
+              contentSha256: _decodeSha256Hex(attachment.contentHash),
+              displayName: attachment.displayName,
+              mediaType: attachment.mediaType,
+            ),
+          );
+          final retirement = _materializedSourceRetirements[attachment];
+          if (retirement != null &&
+              !retirements.any(
+                (existing) =>
+                    p.equals(existing.sourcePath, retirement.sourcePath),
+              )) {
+            retirements.add(retirement);
+          }
         }
       }
 
@@ -898,8 +910,10 @@ final class E2eeChatContentRuntime
       }
       return result;
     } finally {
-      for (final attachment in inputs) {
-        _materializedSourceRetirements[attachment] = null;
+      for (final input in inputs) {
+        for (final attachment in input.attachments) {
+          _materializedSourceRetirements[attachment] = null;
+        }
       }
       _finishLocalOperation();
     }

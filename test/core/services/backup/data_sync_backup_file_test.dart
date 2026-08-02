@@ -12,6 +12,7 @@ import 'package:path_provider_platform_interface/path_provider_platform_interfac
 import 'package:shared_preferences/shared_preferences.dart';
 // ignore: depend_on_referenced_packages
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
+import 'package:sqlite3/sqlite3.dart' as sqlite;
 
 import 'package:Kelivo/core/database/app_database.dart';
 import 'package:Kelivo/core/database/chat_database_gateway.dart';
@@ -299,6 +300,7 @@ Future<File> _createSqliteBackupFixture({
   bool secretsIncluded = true,
   bool includeFiles = false,
   String? assetContent,
+  bool legacySchema12 = false,
 }) async {
   if (assetContent != null && !includeFiles) {
     throw ArgumentError.value(assetContent, 'assetContent');
@@ -308,7 +310,7 @@ Future<File> _createSqliteBackupFixture({
     final databaseFile = File(databasePath);
     final repository = ChatDatabaseRepository.open(
       file: databaseFile,
-      cipher: testDatabaseCipher,
+      cipher: legacySchema12 ? testPlaintextDatabaseCipher : testDatabaseCipher,
     );
     try {
       await repository.ensureReady();
@@ -325,7 +327,10 @@ Future<File> _createSqliteBackupFixture({
             message: ChatMessage(
               id: 'fixture-message',
               role: 'assistant',
-              content: 'fixture content',
+              content: legacySchema12 && assetContent != null
+                  ? 'fixture content'
+                        r'[file:C:\old-device\workspace\upload\fixture.txt|fixture.txt|text/plain]'
+                  : 'fixture content',
               conversationId: 'fixture-conversation',
             ),
             messageOrder: 0,
@@ -337,6 +342,40 @@ Future<File> _createSqliteBackupFixture({
       await repository.checkpoint();
     } finally {
       await repository.close();
+    }
+    if (legacySchema12) {
+      final database = sqlite.sqlite3.open(databaseFile.path);
+      try {
+        database.execute('PRAGMA foreign_keys = OFF;');
+        for (final table in const <String>[
+          'message_asset_rows',
+          'asset_reference_dirty_rows',
+          'asset_gc_quarantine_rows',
+          'asset_gc_lease_rows',
+          'asset_gc_rows',
+          'gc_audit_rows',
+          'asset_rows',
+          'e2ee_attachment_download_rows',
+          'e2ee_attachment_upload_rows',
+          'e2ee_config_entry_rows',
+          'e2ee_data_rekey_operation_rows',
+          'e2ee_verified_membership_anchor_rows',
+          'e2ee_sync_pull_checkpoint_rows',
+          'e2ee_sync_remote_record_rows',
+          'e2ee_sync_outbox_rows',
+          'e2ee_sync_operation_rows',
+          'e2ee_sync_intent_rows',
+          'e2ee_sync_record_head_rows',
+          'e2ee_sync_record_parent_rows',
+          'e2ee_sync_record_state_rows',
+        ]) {
+          database.execute('DROP TABLE $table;');
+        }
+        database.userVersion = 12;
+      } finally {
+        database.close();
+      }
+      return (schemaVersion: 12, conversationCount: 1, messageCount: 1);
     }
     return ChatDatabaseRepository.prepareSnapshotForRestore(
       databaseFile,
@@ -890,11 +929,29 @@ void main() {
 
         final snapshotFile = File('${root.path}/archived.sqlite');
         await snapshotFile.writeAsBytes(databaseEntry!.readBytes()!);
+        expect(await snapshotFile.openRead(0, 16).first, const <int>[
+          0x53,
+          0x51,
+          0x4c,
+          0x69,
+          0x74,
+          0x65,
+          0x20,
+          0x66,
+          0x6f,
+          0x72,
+          0x6d,
+          0x61,
+          0x74,
+          0x20,
+          0x33,
+          0x00,
+        ]);
         final archivedHash = await _fileSha256(snapshotFile);
         final archivedContent = await Isolate.run(() async {
           final repository = ChatDatabaseRepository.open(
             file: snapshotFile,
-            cipher: testDatabaseCipher,
+            cipher: testPlaintextDatabaseCipher,
           );
           try {
             await repository.ensureReady();
@@ -1047,6 +1104,51 @@ void main() {
         'signature',
       );
     });
+
+    test(
+      'imports a plaintext schema 12 backup into the live database',
+      () async {
+        final zipFile = await _createSqliteBackupFixture(
+          root: root,
+          prefix: 'legacy_schema_12',
+          settings: const <String, dynamic>{},
+          includeFiles: true,
+          assetContent: 'legacy attachment',
+          legacySchema12: true,
+        );
+        final chatService = ChatService(
+          const UntrackedSyncWriteExecutor.forTests(),
+        );
+        await chatService.init();
+        addTearDown(chatService.close);
+        final existing = await chatService.createConversation(
+          title: 'Existing',
+        );
+
+        await DataSync(chatService: chatService).restoreLocalFile(
+          zipFile,
+          const LocalBackupOptions(includeChats: true, includeFiles: true),
+        );
+
+        expect(chatService.getConversation(existing.id), isNull);
+        expect(chatService.getConversation('fixture-conversation'), isNotNull);
+        final restoredMessage = (await chatService.loadMessages(
+          'fixture-conversation',
+        )).single;
+        expect(restoredMessage.content, 'fixture content');
+        expect(restoredMessage.attachments, hasLength(1));
+        expect(
+          restoredMessage.attachments.single.path,
+          p.join(root.path, 'upload', 'fixture.txt'),
+        );
+        expect(restoredMessage.attachments.single.displayName, 'fixture.txt');
+        expect(restoredMessage.attachments.single.mediaType, 'text/plain');
+        expect(
+          await RestoreStartupGate.inspect(appDataDirectory: root),
+          isNull,
+        );
+      },
+    );
 
     test('retains a prepared SQLite candidate under app data', () async {
       final zipFile = await _createSqliteBackupFixture(

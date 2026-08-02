@@ -34,6 +34,7 @@ typedef _VersionedBackupInfo = ({
   bool includeChats,
   bool includeFiles,
   bool secretsIncluded,
+  bool requiresLiveChatImport,
   String normalizedManifestSha256,
 });
 
@@ -843,6 +844,7 @@ class DataSync {
     }
 
     final rawDatabase = manifest['database'];
+    var requiresLiveChatImport = false;
     if (payloadKind == 'sqlite') {
       if (!includeChats ||
           !entries.containsKey(_databaseEntryName) ||
@@ -864,16 +866,21 @@ class DataSync {
       final databaseFile = File(
         p.joinAll([extractDirPath, ..._databaseEntryName.split('/')]),
       );
-      final databaseInfo =
-          await ChatDatabaseRepository.prepareSnapshotForRestore(
+      final preparation =
+          await ChatDatabaseRepository.prepareBackupSnapshotForRestore(
             databaseFile,
             cipher: cipher,
           );
-      if (databaseInfo.schemaVersion != schemaVersion ||
-          databaseInfo.conversationCount != conversationCount ||
-          databaseInfo.messageCount != messageCount) {
+      if (preparation.sourceInfo.schemaVersion != schemaVersion ||
+          preparation.sourceInfo.conversationCount != conversationCount ||
+          preparation.sourceInfo.messageCount != messageCount) {
         throw const FormatException('manifest_database_metadata');
       }
+      database['schemaVersion'] = preparation.preparedInfo.schemaVersion;
+      database['conversationCount'] =
+          preparation.preparedInfo.conversationCount;
+      database['messageCount'] = preparation.preparedInfo.messageCount;
+      requiresLiveChatImport = preparation.sourceWasPlaintext;
       entries[_databaseEntryName] = (
         bytes: databaseFile.lengthSync(),
         sha256: _sha256FileSync(databaseFile),
@@ -906,6 +913,7 @@ class DataSync {
       includeChats: includeChats,
       includeFiles: includeFiles,
       secretsIncluded: true,
+      requiresLiveChatImport: requiresLiveChatImport,
       normalizedManifestSha256: normalizedManifestSha256,
     );
   }
@@ -1244,6 +1252,10 @@ class DataSync {
           cfg.includeChats &&
           await chatsFile.exists();
       final restoreChats = restoreVersionedChats || restoreLegacyChats;
+      final restoreVersionedFiles =
+          versionedBackup != null &&
+          cfg.includeFiles &&
+          versionedBackup.includeFiles;
       final settings =
           jsonDecode(await settingsFile.readAsString()) as Map<String, dynamic>;
       BackupSettingsValidator.normalizeAndValidate(settings);
@@ -1251,8 +1263,8 @@ class DataSync {
       if (versionedBackup != null) {
         final includeChats = versionedBackup.includeChats;
         final includeFiles = versionedBackup.includeFiles;
-        final restoreFiles = cfg.includeFiles && includeFiles;
-        if (mode == RestoreMode.overwrite) {
+        if (mode == RestoreMode.overwrite &&
+            !versionedBackup.requiresLiveChatImport) {
           final appDataPath = (await AppDirectories.getAppDataDirectory()).path;
           final extractedPath = extractDir.path;
           final sourceManifestSha256 = versionedBackup.normalizedManifestSha256;
@@ -1264,18 +1276,26 @@ class DataSync {
             bundleIncludesChats: includeChats,
             bundleIncludesFiles: includeFiles,
             restoreChats: restoreChats,
-            restoreFiles: restoreFiles,
+            restoreFiles: restoreVersionedFiles,
             cipher: chatService.databaseCipher,
           );
           return;
         }
       }
+      File? deferredVersionedDatabaseFile;
       await _runLocalRestoreWrite<void>(
         write: () async {
           if (versionedBackup != null && restoreChats) {
-            _lastMergeReport = await chatService.mergeDatabaseSnapshot(
-              File(p.join(extractDir.path, _databaseEntryName)),
+            final databaseFile = File(
+              p.join(extractDir.path, _databaseEntryName),
             );
+            if (mode == RestoreMode.overwrite) {
+              deferredVersionedDatabaseFile = databaseFile;
+            } else {
+              _lastMergeReport = await chatService.mergeDatabaseSnapshot(
+                databaseFile,
+              );
+            }
           }
           var conversations = const <Conversation>[];
           var messages = const <ChatMessage>[];
@@ -1839,6 +1859,19 @@ class DataSync {
                 }
               }
             });
+          }
+          final databaseFile = deferredVersionedDatabaseFile;
+          if (databaseFile != null) {
+            final attachmentDirectories = restoreVersionedFiles
+                ? (
+                    uploadDirectory: await _getUploadDir(),
+                    imagesDirectory: await _getImagesDir(),
+                  )
+                : null;
+            await chatService.replaceDatabaseSnapshotFromBackup(
+              databaseFile,
+              attachmentDirectories: attachmentDirectories,
+            );
           }
         },
       );
