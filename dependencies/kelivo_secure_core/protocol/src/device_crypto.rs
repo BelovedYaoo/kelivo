@@ -217,15 +217,10 @@ pub enum DeviceCryptoError {
     DataRekeyCompletionProofSignatureInvalid,
     InvalidSelfRevocationGeneration,
     InvalidSelfRevocationKeyEpoch,
-    InvalidSelfRevocationIntentDigestLength {
-        expected: usize,
-        actual: usize,
-    },
     InvalidSelfRevocationIntentSignatureLength {
         expected: usize,
         actual: usize,
     },
-    SelfRevocationIntentDigestMismatch,
     SelfRevocationIntentSignatureInvalid,
     InvalidKeyEpoch,
     ArkKeyEpochNotFound,
@@ -340,17 +335,10 @@ impl fmt::Display for DeviceCryptoError {
             Self::InvalidSelfRevocationKeyEpoch => {
                 formatter.write_str("自撤销意图密钥代次超出协议范围")
             }
-            Self::InvalidSelfRevocationIntentDigestLength { expected, actual } => write!(
-                formatter,
-                "自撤销意图摘要长度无效，预期 {expected}，实际 {actual}"
-            ),
             Self::InvalidSelfRevocationIntentSignatureLength { expected, actual } => write!(
                 formatter,
                 "自撤销意图签名长度无效，预期 {expected}，实际 {actual}"
             ),
-            Self::SelfRevocationIntentDigestMismatch => {
-                formatter.write_str("自撤销意图摘要与规范字段不匹配")
-            }
             Self::SelfRevocationIntentSignatureInvalid => formatter.write_str("自撤销意图签名无效"),
             Self::InvalidKeyEpoch => formatter.write_str("ARK 密钥代次无效"),
             Self::ArkKeyEpochNotFound => formatter.write_str("ARK 密钥环中不存在指定代次"),
@@ -903,16 +891,6 @@ pub struct SelfRevocationIntentFields {
 pub struct SelfRevocationIntentDigest([u8; SELF_REVOCATION_INTENT_DIGEST_LENGTH]);
 
 impl SelfRevocationIntentDigest {
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, DeviceCryptoError> {
-        if bytes.len() != SELF_REVOCATION_INTENT_DIGEST_LENGTH {
-            return Err(DeviceCryptoError::InvalidSelfRevocationIntentDigestLength {
-                expected: SELF_REVOCATION_INTENT_DIGEST_LENGTH,
-                actual: bytes.len(),
-            });
-        }
-        Ok(Self(copy_array(bytes)))
-    }
-
     pub const fn as_bytes(&self) -> &[u8; SELF_REVOCATION_INTENT_DIGEST_LENGTH] {
         &self.0
     }
@@ -958,14 +936,9 @@ impl SelfRevocationIntent {
 pub fn verify_self_revocation_intent(
     signing_public_key: &DeviceSigningPublicKey,
     fields: SelfRevocationIntentFields,
-    intent_digest: &[u8],
     signature: &[u8],
-) -> Result<(), DeviceCryptoError> {
-    let expected_digest = self_revocation_intent_digest(fields)?;
-    let intent_digest = SelfRevocationIntentDigest::from_bytes(intent_digest)?;
-    if intent_digest != expected_digest {
-        return Err(DeviceCryptoError::SelfRevocationIntentDigestMismatch);
-    }
+) -> Result<SelfRevocationIntentDigest, DeviceCryptoError> {
+    let intent_digest = self_revocation_intent_digest(fields)?;
     let signature = SelfRevocationIntentSignature::from_bytes(signature)?;
     let verifying_key = signing_public_key.verifying_key()?;
     if !verify_strict_device_signature(
@@ -975,7 +948,7 @@ pub fn verify_self_revocation_intent(
     ) {
         return Err(DeviceCryptoError::SelfRevocationIntentSignatureInvalid);
     }
-    Ok(())
+    Ok(intent_digest)
 }
 
 fn self_revocation_intent_digest(
@@ -3717,13 +3690,13 @@ mod tests {
             .expect("规范自撤销意图应可创建");
         assert_eq!(intent.digest().as_bytes(), &expected_digest);
         assert_eq!(intent.signature().as_bytes(), &expected_signature);
-        verify_self_revocation_intent(
+        let verified_digest = verify_self_revocation_intent(
             &identity.public_keys().signing,
             fields,
-            intent.digest().as_bytes(),
             intent.signature().as_bytes(),
         )
         .expect("服务器固定向量应通过严格验签");
+        assert_eq!(verified_digest.as_bytes(), &expected_digest);
 
         let tampered_fields = [
             SelfRevocationIntentFields {
@@ -3765,24 +3738,11 @@ mod tests {
                 verify_self_revocation_intent(
                     &identity.public_keys().signing,
                     tampered,
-                    intent.digest().as_bytes(),
                     intent.signature().as_bytes(),
                 ),
-                Err(DeviceCryptoError::SelfRevocationIntentDigestMismatch)
+                Err(DeviceCryptoError::SelfRevocationIntentSignatureInvalid)
             ));
         }
-
-        let mut tampered_digest = *intent.digest().as_bytes();
-        tampered_digest[0] ^= 1;
-        assert!(matches!(
-            verify_self_revocation_intent(
-                &identity.public_keys().signing,
-                fields,
-                &tampered_digest,
-                intent.signature().as_bytes(),
-            ),
-            Err(DeviceCryptoError::SelfRevocationIntentDigestMismatch)
-        ));
 
         let mut tampered_signature = *intent.signature().as_bytes();
         tampered_signature[0] ^= 1;
@@ -3790,7 +3750,6 @@ mod tests {
             verify_self_revocation_intent(
                 &identity.public_keys().signing,
                 fields,
-                intent.digest().as_bytes(),
                 &tampered_signature,
             ),
             Err(DeviceCryptoError::SelfRevocationIntentSignatureInvalid)
@@ -3802,7 +3761,6 @@ mod tests {
             verify_self_revocation_intent(
                 &other_identity.public_keys().signing,
                 fields,
-                intent.digest().as_bytes(),
                 intent.signature().as_bytes(),
             ),
             Err(DeviceCryptoError::SelfRevocationIntentSignatureInvalid)

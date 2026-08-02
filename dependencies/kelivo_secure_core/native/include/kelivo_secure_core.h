@@ -22,7 +22,7 @@ extern "C" {
 
 typedef int32_t KelivoStatus;
 
-#define KELIVO_CORE_ABI_VERSION UINT32_C(22)
+#define KELIVO_CORE_ABI_VERSION UINT32_C(23)
 #define KELIVO_CORE_CAPABILITIES_STRUCT_SIZE UINT32_C(32)
 #define KELIVO_KEY_SLOT_ID_SIZE ((size_t)16)
 #define KELIVO_KEY_POLICY_VERSION UINT32_C(1)
@@ -768,7 +768,8 @@ KELIVO_CORE_API KelivoStatus kelivo_self_revocation_intent_create(
     size_t *out_signature_length);
 
 /*
- * 重新构造 self-revocation intent v3 摘要并同时绑定传入摘要与签名。
+ * 重新构造 self-revocation intent v3 摘要并严格验证签名，仅在成功时输出该摘要。
+ * 任一失败（包括短缓冲）都会清零声明容量内的输出及输出长度。
  * signing_public_key 的成员信任关系仍由调用方根据已认证成员清单建立。
  */
 KELIVO_CORE_API KelivoStatus kelivo_self_revocation_intent_verify(
@@ -787,10 +788,11 @@ KELIVO_CORE_API KelivoStatus kelivo_self_revocation_intent_verify(
     const uint8_t *expected_membership_manifest_digest,
     size_t expected_membership_manifest_digest_length,
     uint64_t expires_at_ms,
-    const uint8_t *intent_digest,
-    size_t intent_digest_length,
     const uint8_t *signature,
-    size_t signature_length);
+    size_t signature_length,
+    uint8_t *out_intent_digest,
+    size_t out_intent_digest_capacity,
+    size_t *out_intent_digest_length);
 
 KELIVO_CORE_API KelivoStatus kelivo_device_identity_handle_close(
     uint64_t identity_handle);

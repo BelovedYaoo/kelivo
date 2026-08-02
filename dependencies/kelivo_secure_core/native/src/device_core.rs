@@ -762,7 +762,6 @@ fn device_error_status(error: crypto::DeviceCryptoError) -> KelivoStatus {
         Error::DeviceProofBindingMismatch
         | Error::DeviceProofSignatureInvalid
         | Error::DataRekeyCompletionProofSignatureInvalid
-        | Error::SelfRevocationIntentDigestMismatch
         | Error::SelfRevocationIntentSignatureInvalid
         | Error::ArkEnvelopeBindingMismatch
         | Error::ArkEnvelopeSignatureInvalid
@@ -799,7 +798,6 @@ fn device_error_status(error: crypto::DeviceCryptoError) -> KelivoStatus {
         | Error::InvalidDataRekeyCompletionProofSignatureLength { .. }
         | Error::InvalidSelfRevocationGeneration
         | Error::InvalidSelfRevocationKeyEpoch
-        | Error::InvalidSelfRevocationIntentDigestLength { .. }
         | Error::InvalidSelfRevocationIntentSignatureLength { .. }
         | Error::InvalidKeyEpoch
         | Error::ArkKeyEpochNotFound
@@ -1070,6 +1068,26 @@ unsafe fn prepare_self_revocation_intent_outputs(
     };
     digest_result?;
     signature_result
+}
+
+unsafe fn prepare_self_revocation_verify_output(
+    out_intent_digest: *mut u8,
+    out_intent_digest_capacity: usize,
+    out_intent_digest_length: *mut usize,
+) -> Result<(), KelivoStatus> {
+    let clear_length = out_intent_digest_capacity.min(crypto::SELF_REVOCATION_INTENT_DIGEST_LENGTH);
+    if !out_intent_digest.is_null() && clear_length != 0 {
+        // verify 的摘要只有完整验签成功才成立，任何输入错误与短缓冲都不得留下旧值。
+        unsafe { core::ptr::write_bytes(out_intent_digest, 0, clear_length) };
+    }
+    unsafe { write_output(out_intent_digest_length, 0)? };
+    if out_intent_digest_capacity < crypto::SELF_REVOCATION_INTENT_DIGEST_LENGTH {
+        return Err(KelivoStatus::OutputBufferTooSmall);
+    }
+    if out_intent_digest.is_null() {
+        return Err(KelivoStatus::NullPointer);
+    }
+    Ok(())
 }
 
 fn create_pending_pairing_at(
@@ -1381,7 +1399,7 @@ pub unsafe extern "C" fn kelivo_self_revocation_intent_create(
 #[unsafe(no_mangle)]
 /// # Safety
 ///
-/// 所有输入指针必须覆盖各自声明长度。
+/// 所有输入指针必须覆盖各自声明长度；输出缓冲区与长度指针必须可写。
 #[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn kelivo_self_revocation_intent_verify(
     signing_public_key: *const u8,
@@ -1399,11 +1417,21 @@ pub unsafe extern "C" fn kelivo_self_revocation_intent_verify(
     expected_membership_manifest_digest: *const u8,
     expected_membership_manifest_digest_length: usize,
     expires_at_ms: u64,
-    intent_digest: *const u8,
-    intent_digest_length: usize,
     signature: *const u8,
     signature_length: usize,
+    out_intent_digest: *mut u8,
+    out_intent_digest_capacity: usize,
+    out_intent_digest_length: *mut usize,
 ) -> i32 {
+    if let Err(status) = unsafe {
+        prepare_self_revocation_verify_output(
+            out_intent_digest,
+            out_intent_digest_capacity,
+            out_intent_digest_length,
+        )
+    } {
+        return status.code();
+    }
     let signing_public_key =
         match unsafe { read_fixed(signing_public_key, signing_public_key_length) } {
             Ok(bytes) => match crypto::DeviceSigningPublicKey::from_bytes(bytes) {
@@ -1432,21 +1460,23 @@ pub unsafe extern "C" fn kelivo_self_revocation_intent_verify(
         Ok(fields) => fields,
         Err(status) => return status.code(),
     };
-    let intent_digest = match unsafe { read_input(intent_digest, intent_digest_length) } {
-        Ok(intent_digest) => intent_digest,
-        Err(status) => return status.code(),
-    };
     let signature = match unsafe { read_input(signature, signature_length) } {
         Ok(signature) => signature,
         Err(status) => return status.code(),
     };
-    match crypto::verify_self_revocation_intent(
-        &signing_public_key,
-        fields,
-        intent_digest,
-        signature,
-    ) {
-        Ok(()) => KelivoStatus::Ok.code(),
+    match crypto::verify_self_revocation_intent(&signing_public_key, fields, signature) {
+        Ok(intent_digest) => {
+            unsafe {
+                write_bytes(
+                    out_intent_digest,
+                    out_intent_digest_capacity,
+                    intent_digest.as_bytes(),
+                    out_intent_digest_length,
+                )
+                .expect("已清零且验证的自撤销摘要输出必须可写");
+            }
+            KelivoStatus::Ok.code()
+        }
         Err(error) => device_error_status(error).code(),
     }
 }

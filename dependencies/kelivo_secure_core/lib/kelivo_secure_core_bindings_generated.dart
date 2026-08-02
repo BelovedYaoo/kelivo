@@ -646,6 +646,7 @@ external int kelivo_self_revocation_intent_create(
     ffi.Size,
     ffi.Pointer<ffi.Uint8>,
     ffi.Size,
+    ffi.Pointer<ffi.Size>,
   )
 >()
 external int kelivo_self_revocation_intent_verify(
@@ -664,10 +665,11 @@ external int kelivo_self_revocation_intent_verify(
   ffi.Pointer<ffi.Uint8> expected_membership_manifest_digest,
   int expected_membership_manifest_digest_length,
   int expires_at_ms,
-  ffi.Pointer<ffi.Uint8> intent_digest,
-  int intent_digest_length,
   ffi.Pointer<ffi.Uint8> signature,
   int signature_length,
+  ffi.Pointer<ffi.Uint8> out_intent_digest,
+  int out_intent_digest_capacity,
+  ffi.Pointer<ffi.Size> out_intent_digest_length,
 );
 
 @ffi.Native<KelivoStatus Function(ffi.Uint64)>()
@@ -1912,7 +1914,7 @@ final class KelivoCoreCapabilities extends ffi.Struct {
   external ffi.Array<ffi.Uint32> reserved;
 }
 
-const int KELIVO_CORE_ABI_VERSION = 22;
+const int KELIVO_CORE_ABI_VERSION = 23;
 
 const int KELIVO_CORE_CAPABILITIES_STRUCT_SIZE = 32;
 

@@ -73,7 +73,7 @@ mod ios;
 #[cfg(target_os = "ios")]
 use ios as platform;
 
-const ABI_VERSION: u32 = 22;
+const ABI_VERSION: u32 = 23;
 const CAPABILITIES_STRUCT_SIZE: u32 = 32;
 const KEY_SLOT_ID_SIZE: usize = 16;
 const KEY_POLICY_VERSION: u32 = 1;
@@ -4596,6 +4596,8 @@ mod tests {
         assert_eq!(intent_digest, expected_digest);
         assert_eq!(intent_digest_length, intent_digest.len());
         assert_eq!(intent_signature_length, intent_signature.len());
+        let mut verified_digest = [0xa5_u8; crypto::SELF_REVOCATION_INTENT_DIGEST_LENGTH];
+        let mut verified_digest_length = usize::MAX;
         assert_eq!(
             unsafe {
                 kelivo_self_revocation_intent_verify(
@@ -4614,16 +4616,21 @@ mod tests {
                     manifest_digest.as_ptr(),
                     manifest_digest.len(),
                     1_800_000_000_000,
-                    intent_digest.as_ptr(),
-                    intent_digest.len(),
                     intent_signature.as_ptr(),
                     intent_signature.len(),
+                    verified_digest.as_mut_ptr(),
+                    verified_digest.len(),
+                    &mut verified_digest_length,
                 )
             },
             KelivoStatus::Ok.code()
         );
+        assert_eq!(verified_digest, expected_digest);
+        assert_eq!(verified_digest_length, verified_digest.len());
 
         let tampered_operation_id = account_id(0x45);
+        verified_digest.fill(0xa5);
+        verified_digest_length = usize::MAX;
         assert_eq!(
             unsafe {
                 kelivo_self_revocation_intent_verify(
@@ -4642,17 +4649,25 @@ mod tests {
                     manifest_digest.as_ptr(),
                     manifest_digest.len(),
                     1_800_000_000_000,
-                    intent_digest.as_ptr(),
-                    intent_digest.len(),
                     intent_signature.as_ptr(),
                     intent_signature.len(),
+                    verified_digest.as_mut_ptr(),
+                    verified_digest.len(),
+                    &mut verified_digest_length,
                 )
             },
             KelivoStatus::DeviceAuthenticationFailed.code()
         );
+        assert_eq!(
+            verified_digest,
+            [0; crypto::SELF_REVOCATION_INTENT_DIGEST_LENGTH]
+        );
+        assert_eq!(verified_digest_length, 0);
 
         let mut tampered_signature = intent_signature;
         tampered_signature[0] ^= 1;
+        verified_digest.fill(0xa5);
+        verified_digest_length = usize::MAX;
         assert_eq!(
             unsafe {
                 kelivo_self_revocation_intent_verify(
@@ -4671,14 +4686,56 @@ mod tests {
                     manifest_digest.as_ptr(),
                     manifest_digest.len(),
                     1_800_000_000_000,
-                    intent_digest.as_ptr(),
-                    intent_digest.len(),
                     tampered_signature.as_ptr(),
                     tampered_signature.len(),
+                    verified_digest.as_mut_ptr(),
+                    verified_digest.len(),
+                    &mut verified_digest_length,
                 )
             },
             KelivoStatus::DeviceAuthenticationFailed.code()
         );
+        assert_eq!(
+            verified_digest,
+            [0; crypto::SELF_REVOCATION_INTENT_DIGEST_LENGTH]
+        );
+        assert_eq!(verified_digest_length, 0);
+
+        verified_digest.fill(0xa5);
+        verified_digest_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_self_revocation_intent_verify(
+                    signing_public_key.as_ptr(),
+                    signing_public_key.len(),
+                    user_id.as_ptr(),
+                    user_id.len(),
+                    device_id.as_ptr(),
+                    device_id.len(),
+                    mutation_id.as_ptr(),
+                    mutation_id.len(),
+                    operation_id.as_ptr(),
+                    operation_id.len(),
+                    7,
+                    11,
+                    manifest_digest.as_ptr(),
+                    manifest_digest.len(),
+                    1_800_000_000_000,
+                    intent_signature.as_ptr(),
+                    intent_signature.len(),
+                    verified_digest.as_mut_ptr(),
+                    verified_digest.len() - 1,
+                    &mut verified_digest_length,
+                )
+            },
+            KelivoStatus::OutputBufferTooSmall.code()
+        );
+        assert_eq!(
+            &verified_digest[..verified_digest.len() - 1],
+            &[0; crypto::SELF_REVOCATION_INTENT_DIGEST_LENGTH - 1]
+        );
+        assert_eq!(verified_digest[verified_digest.len() - 1], 0xa5);
+        assert_eq!(verified_digest_length, 0);
 
         assert_eq!(
             kelivo_device_identity_handle_close(identity),

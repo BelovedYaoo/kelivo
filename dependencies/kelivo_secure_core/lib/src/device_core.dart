@@ -943,7 +943,7 @@ extension KelivoDeviceCore on KelivoSecureCore {
     }
   }
 
-  Future<void> verifySelfRevocationIntent({
+  Future<Uint8List> verifySelfRevocationIntent({
     required Uint8List signingPublicKey,
     required Uint8List userId,
     required Uint8List deviceId,
@@ -953,12 +953,17 @@ extension KelivoDeviceCore on KelivoSecureCore {
     required int expectedKeyEpoch,
     required Uint8List expectedMembershipManifestDigest,
     required int expiresAtMs,
-    required KelivoSelfRevocationIntent intent,
-  }) {
+    required Uint8List signature,
+  }) async {
     _requireLength(
       signingPublicKey,
       _devicePublicKeyLength,
       'signingPublicKey',
+    );
+    _requireLength(
+      signature,
+      _selfRevocationIntentSignatureLength,
+      'signature',
     );
     _validateSelfRevocationIntentFields(
       userId: userId,
@@ -970,7 +975,7 @@ extension KelivoDeviceCore on KelivoSecureCore {
       expectedMembershipManifestDigest: expectedMembershipManifestDigest,
       expiresAtMs: expiresAtMs,
     );
-    return Isolate.run(
+    final intentDigest = await Isolate.run(
       () => _verifySelfRevocationIntent(
         Uint8List.fromList(signingPublicKey),
         Uint8List.fromList(userId),
@@ -981,10 +986,10 @@ extension KelivoDeviceCore on KelivoSecureCore {
         expectedKeyEpoch,
         Uint8List.fromList(expectedMembershipManifestDigest),
         expiresAtMs,
-        Uint8List.fromList(intent.intentDigest),
-        Uint8List.fromList(intent.intentSignature),
+        Uint8List.fromList(signature),
       ),
     );
+    return _immutableDeviceBytes(intentDigest);
   }
 
   Future<KelivoDeviceRegistrationBundle> createDeviceRegistrationFinish(
@@ -2166,7 +2171,7 @@ void _verifyDataRekeyCompletionProof(
   }
 }
 
-void _verifySelfRevocationIntent(
+Uint8List _verifySelfRevocationIntent(
   Uint8List signingPublicKey,
   Uint8List userId,
   Uint8List deviceId,
@@ -2176,7 +2181,6 @@ void _verifySelfRevocationIntent(
   int expectedKeyEpoch,
   Uint8List expectedMembershipManifestDigest,
   int expiresAtMs,
-  Uint8List intentDigest,
   Uint8List intentSignature,
 ) {
   final signingPublicKeyPointer = _copyToNative(signingPublicKey);
@@ -2185,8 +2189,9 @@ void _verifySelfRevocationIntent(
   final mutationIdPointer = _copyToNative(mutationId);
   final operationIdPointer = _copyToNative(operationId);
   final manifestDigestPointer = _copyToNative(expectedMembershipManifestDigest);
-  final intentDigestPointer = _copyToNative(intentDigest);
   final intentSignaturePointer = _copyToNative(intentSignature);
+  final intentDigest = calloc<ffi.Uint8>(_selfRevocationIntentDigestLength);
+  final intentDigestLength = calloc<ffi.Size>();
   try {
     _throwOnError(
       operation: 'self_revocation_intent_verify',
@@ -2206,11 +2211,20 @@ void _verifySelfRevocationIntent(
         manifestDigestPointer,
         expectedMembershipManifestDigest.length,
         expiresAtMs,
-        intentDigestPointer,
-        intentDigest.length,
         intentSignaturePointer,
         intentSignature.length,
+        intentDigest,
+        _selfRevocationIntentDigestLength,
+        intentDigestLength,
       ),
+    );
+    _requireExactOutputLength(
+      operation: 'self_revocation_intent_verify.digest',
+      expected: _selfRevocationIntentDigestLength,
+      actual: intentDigestLength.value,
+    );
+    return Uint8List.fromList(
+      intentDigest.asTypedList(_selfRevocationIntentDigestLength),
     );
   } finally {
     _clearAndFree(signingPublicKeyPointer, signingPublicKey.length);
@@ -2222,8 +2236,9 @@ void _verifySelfRevocationIntent(
       manifestDigestPointer,
       expectedMembershipManifestDigest.length,
     );
-    _clearAndFree(intentDigestPointer, intentDigest.length);
     _clearAndFree(intentSignaturePointer, intentSignature.length);
+    _clearAndFree(intentDigest, _selfRevocationIntentDigestLength);
+    calloc.free(intentDigestLength);
     signingPublicKey.fillRange(0, signingPublicKey.length, 0);
     userId.fillRange(0, userId.length, 0);
     deviceId.fillRange(0, deviceId.length, 0);
@@ -2234,7 +2249,6 @@ void _verifySelfRevocationIntent(
       expectedMembershipManifestDigest.length,
       0,
     );
-    intentDigest.fillRange(0, intentDigest.length, 0);
     intentSignature.fillRange(0, intentSignature.length, 0);
   }
 }
