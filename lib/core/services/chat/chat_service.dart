@@ -199,6 +199,7 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
   }
 
   bool _initialized = false;
+  bool _staleStreamingRecoveryPending = false;
   Future<void>? _initFuture;
   bool get initialized => _initialized;
   int _statisticsRevision = 0;
@@ -238,8 +239,8 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     try {
       await _loadConversationsCache();
 
-      // 清理上一次崩溃或强制退出遗留的 isStreaming 标记；重新启动后，
-      // 不可能仍有消息处于活动流式生成中。
+      // 本地模式立即清理遗留流式状态；E2EE 模式先标记待恢复，
+      // 避免在密钥和附件组件就绪前产生不完整的同步快照。
       await _resetStaleStreamingFlags();
 
       _initialized = true;
@@ -2172,11 +2173,13 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     );
   }
 
-  /// 重置上一次崩溃或强制退出遗留的 isStreaming 标记。重新启动后，
-  /// 不可能仍有消息处于活动流式生成中，因此所有持久化的
-  /// `isStreaming: true` 都已过期，必须清除以免加载指示器卡住。
-  ///
+  /// 重新启动后不可能仍有活动的流式生成。本地模式可以立即清理；
+  /// E2EE 模式必须等待密钥、附件与 outbox 就绪，才能原子物化遗留媒体。
   Future<void> _resetStaleStreamingFlags() async {
+    if (_syncWriteExecutor is StructuredAttachmentSyncWriteExecutor) {
+      _staleStreamingRecoveryPending = true;
+      return;
+    }
     final messages = await _repo.getStreamingMessages();
     if (messages.isEmpty) {
       await _repo.resetStaleStreamingState();
@@ -2190,6 +2193,73 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
       keys: keys,
       write: _repo.resetStaleStreamingState,
     );
+  }
+
+  Future<void> recoverStaleStreamingStateForE2eeStartup() async {
+    if (!_initialized) await init();
+    if (!_staleStreamingRecoveryPending) return;
+    final executor = _syncWriteExecutor;
+    if (executor is! StructuredAttachmentSyncWriteExecutor) {
+      throw StateError('stale_streaming_recovery_executor_invalid');
+    }
+    final staleMessages = await _repo.getStreamingMessages();
+    if (staleMessages.isEmpty) {
+      await _repo.resetStaleStreamingState();
+      _staleStreamingRecoveryPending = false;
+      return;
+    }
+
+    final prepared = <_PreparedTerminalAssistantMedia>[];
+    final keys = <SyncEntityKey>{};
+    for (final message in staleMessages) {
+      final terminalMessage = message.copyWith(
+        isStreaming: false,
+        generationStatus: ChatMessage.generationStatusInterrupted,
+      );
+      final terminal = await _prepareTerminalAssistantMedia(
+        terminalMessage,
+        await _repo.getToolEvents(message.id),
+      );
+      prepared.add(terminal);
+      keys.addAll(_messageGraphKeys(terminal.message));
+    }
+    final targets = <StructuredMessageAttachmentSyncTarget>[
+      for (final entry in prepared)
+        if (entry.message.attachments.any(
+          (attachment) => !attachment.hasRemoteIdentity,
+        ))
+          StructuredMessageAttachmentSyncTarget(
+            targetRevisionId: entry.message.id,
+            attachments: entry.message.attachments,
+          ),
+    ];
+
+    Future<int> write() async {
+      for (final entry in prepared) {
+        await _repo.updateStreamingCheckpoint(entry.message, entry.toolEvents);
+      }
+      return _repo.resetStaleStreamingState();
+    }
+
+    if (targets.isEmpty) {
+      await executor.runLocalBatch<int>(keys: keys, write: write);
+    } else {
+      await executor.runLocalBatchWithMessageAttachments<int>(
+        keys: keys,
+        targets: targets,
+        targetWasPersisted: (_) => true,
+        write: write,
+      );
+    }
+    for (final entry in prepared) {
+      _replaceCachedMessage(entry.message);
+      _toolEventsCache[entry.message.id] = List<Map<String, dynamic>>.of(
+        entry.toolEvents,
+      );
+    }
+    _staleStreamingRecoveryPending = false;
+    _statisticsRevision++;
+    notifyListeners();
   }
 
   String _assetGcPathKey(String path) {

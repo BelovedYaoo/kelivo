@@ -5,8 +5,10 @@ import 'dart:io';
 import 'package:Kelivo/core/database/app_database.dart';
 import 'package:Kelivo/core/database/chat_database_gateway.dart';
 import 'package:Kelivo/core/database/chat_database_repository.dart';
+import 'package:Kelivo/core/database/generation_run.dart';
 import 'package:Kelivo/core/models/assistant.dart';
 import 'package:Kelivo/core/models/chat_message.dart';
+import 'package:Kelivo/core/models/conversation.dart';
 import 'package:Kelivo/core/providers/assistant_provider.dart';
 import 'package:Kelivo/core/providers/cloud_sync_provider.dart';
 import 'package:Kelivo/core/providers/instruction_injection_provider.dart';
@@ -3128,7 +3130,7 @@ void main() {
     expect(find.text('撤销并清除'), findsOneWidget);
     expect(
       find.text(
-        '这是当前设备。撤销后将永久删除本次安装中的所有 Kelivo '
+        '这是当前设备。撤销后将永久删除本次安装中的所有 Olivia '
         '账号、本地工作区、聊天、配置、缓存文件和加密密钥。',
       ),
       findsOneWidget,
@@ -4857,6 +4859,178 @@ void main() {
     expect(writeCalled, isTrue);
   });
 
+  test('E2EE 冷启动在调度前恢复遗留流式消息中的正文与 MCP 图片', () async {
+    final harness = await _E2eeRuntimeHarness.create();
+    addTearDown(harness.close);
+    final imagesDirectory = await AppDirectories.getImagesDirectory();
+    final generatedImage = File(
+      '${imagesDirectory.path}${Platform.pathSeparator}stale-generated.png',
+    );
+    final toolImage = File(
+      '${imagesDirectory.path}${Platform.pathSeparator}stale-tool.png',
+    );
+    await generatedImage.writeAsBytes(const <int>[1, 2, 3], flush: true);
+    await toolImage.writeAsBytes(const <int>[4, 5, 6], flush: true);
+    const conversationId = 'stale-media-conversation';
+    const messageId = 'stale-media-message';
+    final seedLease = await harness._databaseGateway.acquire(
+      harness._databaseFile,
+    );
+    try {
+      await seedLease.repository.putMigrationBatch(
+        conversations: <Conversation>[
+          Conversation(
+            id: conversationId,
+            title: '遗留流式消息',
+            messageIds: const <String>[messageId],
+          ),
+        ],
+        messages: <({ChatMessage message, int messageOrder})>[
+          (
+            message: ChatMessage(
+              id: messageId,
+              conversationId: conversationId,
+              turnId: 'stale-media-turn',
+              role: 'assistant',
+              content: '部分回答\n![image](${generatedImage.path})',
+              isStreaming: true,
+              generationStatus: ChatMessage.generationStatusDraft,
+            ),
+            messageOrder: 0,
+          ),
+        ],
+        toolEventsByMessageId: <String, List<Map<String, dynamic>>>{
+          messageId: <Map<String, dynamic>>[
+            <String, dynamic>{
+              'id': 'stale-tool-call',
+              'name': 'render-image',
+              'arguments': const <String, dynamic>{},
+              'content': '工具结果\n[image:${toolImage.path}]',
+            },
+          ],
+        },
+        geminiSignaturesByMessageId: const <String, String>{},
+      );
+      await seedLease.repository.createGenerationRun(
+        id: 'stale-media-run',
+        conversationId: conversationId,
+        targetRevisionId: messageId,
+        createdAt: DateTime.utc(2026, 8, 2),
+      );
+    } finally {
+      await seedLease.release();
+    }
+
+    final hashingStarted = Completer<void>();
+    final allowHashing = Completer<void>();
+    addTearDown(() {
+      if (!allowHashing.isCompleted) allowHashing.complete();
+    });
+    final instance = harness.createInstance(
+      blockInitialPull: true,
+      assetContentHash: (file) async {
+        if (!hashingStarted.isCompleted) hashingStarted.complete();
+        await allowHashing.future;
+        return (await sha256.bind(file.openRead()).first).toString();
+      },
+    );
+    final initialization = instance.runtime.initialize();
+    await Future.any<void>(<Future<void>>[
+      hashingStarted.future,
+      initialization.then<void>((_) {
+        throw StateError('startup_recovery_skipped_media_hash');
+      }),
+    ]).timeout(const Duration(seconds: 15));
+    expect(instance.runtime.state, E2eeChatContentRuntimeState.initializing);
+    var concurrentInitializationCompleted = false;
+    final concurrentInitialization = instance.runtime.initialize().then((_) {
+      concurrentInitializationCompleted = true;
+    });
+    await Future<void>.delayed(Duration.zero);
+    expect(concurrentInitializationCompleted, isFalse);
+    allowHashing.complete();
+    await initialization.timeout(const Duration(seconds: 15));
+    await concurrentInitialization.timeout(const Duration(seconds: 15));
+
+    final recovered = await instance.chatService.loadMessageForSync(messageId);
+    expect(recovered, isNot(equals(null)));
+    expect(recovered!.isStreaming, isFalse);
+    expect(recovered.generationStatus, ChatMessage.generationStatusInterrupted);
+    expect(recovered.content, '部分回答');
+    expect(recovered.attachments, hasLength(2));
+    final rawToolEvent = instance.chatService.getToolEvents(messageId).single;
+    expect(rawToolEvent['content'], isNot(contains(toolImage.path)));
+    expect(rawToolEvent['attachmentOrdinals'], <int>[1]);
+    expect(
+      instance.chatService.getToolEventsForMessage(recovered).single['content'],
+      contains('[image:${recovered.attachments[1].path}]'),
+    );
+    final inspectionLease = await harness._databaseGateway.acquire(
+      harness._databaseFile,
+    );
+    try {
+      expect(
+        await inspectionLease.repository.e2eeAttachmentUploadCommands
+            .hasRetryableWork(),
+        isTrue,
+      );
+      final recoveredRun = await inspectionLease.repository.getGenerationRun(
+        'stale-media-run',
+      );
+      expect(recoveredRun?.state, GenerationRunState.interrupted);
+      expect(recoveredRun?.errorCode, 'app_restart');
+    } finally {
+      await inspectionLease.release();
+    }
+    expect(instance.attachments.createCalls, 0);
+  });
+
+  test('E2EE 附件批次复用同一目标已有的待上传草稿', () async {
+    final harness = await _E2eeRuntimeHarness.create();
+    addTearDown(harness.close);
+    final instance = harness.createInstance(blockInitialPull: true);
+    await instance.runtime.initialize().timeout(const Duration(seconds: 15));
+    final uploadDirectory = await AppDirectories.getUploadDirectory();
+    final source = File(
+      '${uploadDirectory.path}${Platform.pathSeparator}existing-draft.txt',
+    );
+    await source.writeAsString('existing draft payload', flush: true);
+    final conversation = await instance.chatService.createConversation(
+      title: '已有草稿',
+    );
+    final generation = await instance.chatService.beginSendGeneration(
+      conversationId: conversation.id,
+      userContent: '发送附件',
+      userAttachments: <LocalMessageAttachmentInput>[
+        LocalMessageAttachmentInput.file(
+          path: source.path,
+          displayName: 'existing-draft.txt',
+          mediaType: 'text/plain',
+        ),
+      ],
+      modelId: 'model',
+      providerId: 'provider',
+    );
+    final message = generation.userMessage!;
+
+    await instance.runtime.runLocalBatchWithMessageAttachments<void>(
+      keys: <SyncEntityKey>[
+        SyncEntityKey(
+          entityType: E2eeSyncChatRecordTypes.message,
+          entityId: message.id,
+        ),
+      ],
+      targets: <StructuredMessageAttachmentSyncTarget>[
+        StructuredMessageAttachmentSyncTarget(
+          targetRevisionId: message.id,
+          attachments: message.attachments,
+        ),
+      ],
+      targetWasPersisted: (_) => true,
+      write: () async {},
+    );
+  });
+
   test('E2EE 附件受管源路径仍被其他资产引用时不得淘汰', () async {
     final harness = await _E2eeRuntimeHarness.create();
     addTearDown(harness.close);
@@ -6430,6 +6604,7 @@ final class _E2eeRuntimeHarness {
     void Function()? onTransportCreated,
     E2eeAttachmentUploadWorkScanner attachmentWorkScanner =
         _defaultRuntimeAttachmentWorkScanner,
+    AssetContentHash? assetContentHash,
   }) {
     final activeSession = sessionOverride ?? session;
     final transportEvents = <String>[];
@@ -6473,7 +6648,11 @@ final class _E2eeRuntimeHarness {
         securityBootstrapCommitHandler,
       );
     }
-    final chatService = ChatService(runtime, databaseGateway: _databaseGateway);
+    final chatService = ChatService(
+      runtime,
+      databaseGateway: _databaseGateway,
+      assetContentHash: assetContentHash,
+    );
     runtime.bindChatService(chatService);
     _TestConfigProviders? configProviders;
     if (withConfigProviders) {

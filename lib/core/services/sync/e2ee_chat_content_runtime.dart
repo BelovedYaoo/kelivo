@@ -201,6 +201,7 @@ final class E2eeChatContentRuntime
   Future<E2eeSyncCycleReport>? _activeSingleCycle;
   Future<void>? _initializationFuture;
   Future<void>? _closeFuture;
+  final Object _startupRecoveryZoneKey = Object();
   CloudSyncSecurityBootstrapCommitHandler? _securityBootstrapCommitHandler;
   CloudSyncTerminalAuthenticationHandler? _terminalAuthenticationHandler;
   int _activeLocalWrites = 0;
@@ -548,6 +549,13 @@ final class E2eeChatContentRuntime
       _keyLease = null;
       _requireStillInitializing();
 
+      // 只授权这条异步链在 initializing 期使用已就绪的本地事务，
+      // 外部 initialize 调用仍必须等待恢复整体完成。
+      await runZoned<Future<void>>(
+        chatService.recoverStaleStreamingStateForE2eeStartup,
+        zoneValues: <Object?, Object?>{_startupRecoveryZoneKey: this},
+      );
+      _requireStillInitializing();
       _state = E2eeChatContentRuntimeState.ready;
       scheduler?.start();
     } catch (error, stackTrace) {
@@ -782,8 +790,7 @@ final class E2eeChatContentRuntime
   ) async {
     final inputs = List<ChatMessageAttachment>.unmodifiable(attachments);
     if (inputs.isEmpty) return const <ChatMessageAttachment>[];
-    await initialize();
-    _requireReadyForLocalOperation();
+    await _awaitLocalOperationReadiness();
     _activeLocalWrites++;
     try {
       final fileStore = _attachmentFileStore;
@@ -926,8 +933,7 @@ final class E2eeChatContentRuntime
         throw StateError('附件消息批次不得包含重复目标');
       }
     }
-    await initialize();
-    _requireReadyForLocalOperation();
+    await _awaitLocalOperationReadiness();
     _activeLocalWrites++;
     try {
       final uploads = _attachmentUploads;
@@ -1108,8 +1114,7 @@ final class E2eeChatContentRuntime
     required Iterable<SyncEntityKey> keys,
     required Future<T> Function() write,
   }) async {
-    await initialize();
-    _requireReadyForLocalOperation();
+    await _awaitLocalOperationReadiness();
     _activeLocalWrites++;
     try {
       final result = await _runLocalBatchCore<T>(keys: keys, write: write);
@@ -1284,6 +1289,15 @@ final class E2eeChatContentRuntime
     if (_state != E2eeChatContentRuntimeState.ready) {
       throw StateError('E2EE 内容运行时不接受新的本地写入');
     }
+  }
+
+  Future<void> _awaitLocalOperationReadiness() async {
+    if (identical(Zone.current[_startupRecoveryZoneKey], this)) {
+      _requireStillInitializing();
+      return;
+    }
+    await initialize();
+    _requireReadyForLocalOperation();
   }
 
   void _finishLocalOperation() {
