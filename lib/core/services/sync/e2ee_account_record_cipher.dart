@@ -7,7 +7,7 @@ import 'package:uuid/uuid.dart';
 import 'sync_codec.dart';
 
 const e2eeAccountRecordEnvelopeVersion = 1;
-const e2eeAccountRecordSyncProtocolVersion = 3;
+const e2eeAccountRecordSyncProtocolVersion = 4;
 const e2eeAccountRecordMaxCiphertextBytes = 1048576;
 
 const _recordEnvelopeOverheadBytes = 80;

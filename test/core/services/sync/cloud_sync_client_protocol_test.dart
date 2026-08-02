@@ -338,10 +338,14 @@ Future<E2eeUntrustedAccountRecordEnvelope> _sealRawAccountRecord({
   required SyncEntityKey frameKey,
   required String userId,
   int keyEpoch = 7,
+  int protocolVersion = e2eeAccountRecordSyncProtocolVersion,
 }) async {
   final canonicalKey = _recordCanonicalKey(recordIdKey);
   final frame = _recordPlaintextFrame(frameKey, Uint8List(0));
-  final associatedData = _recordAssociatedData(userId);
+  final associatedData = _recordAssociatedData(
+    userId,
+    protocolVersion: protocolVersion,
+  );
   Uint8List? ciphertext;
   try {
     final recordId = await core.deriveAccountRecordId(
@@ -412,12 +416,15 @@ Uint8List _recordPlaintextFrame(SyncEntityKey key, Uint8List payload) {
   return result;
 }
 
-Uint8List _recordAssociatedData(String userId) {
+Uint8List _recordAssociatedData(
+  String userId, {
+  int protocolVersion = e2eeAccountRecordSyncProtocolVersion,
+}) {
   final result = Uint8List(28);
   result.setRange(0, 8, ascii.encode('KELVRA01'));
   final fields = ByteData.sublistView(result);
   fields.setUint16(8, 1, Endian.big);
-  fields.setUint16(10, e2eeAccountRecordSyncProtocolVersion, Endian.big);
+  fields.setUint16(10, protocolVersion, Endian.big);
   result.setRange(12, 28, _rawUuid(userId));
   return result;
 }
@@ -3465,10 +3472,7 @@ void main() {
       request.headers.value(HttpHeaders.authorizationHeader),
       'Bearer $_fullTokenValue',
     );
-    expect(
-      request.headers.value('x-kelivo-sync-protocol-version'),
-      e2eeAccountRecordSyncProtocolVersion.toString(),
-    );
+    _expectSyncProtocolV4Header(request);
     request.response.headers.contentType = ContentType.json;
     request.response.write(
       jsonEncode(<String, Object?>{
@@ -3702,6 +3706,7 @@ void main() {
       request.headers.value(HttpHeaders.authorizationHeader),
       'Bearer ${_dataRekeyRecoveryToken.value}',
     );
+    _expectSyncProtocolV4Header(request);
     expect(body, <String, Object?>{
       'operationId': _mutationId3,
       'sourceDataGeneration': 4,
@@ -3857,6 +3862,7 @@ void main() {
       request.headers.value(HttpHeaders.authorizationHeader),
       'Bearer ${_dataRekeyRecoveryToken.value}',
     );
+    _expectSyncProtocolV4Header(request);
     expect(body, <String, Object?>{
       'operationId': _mutationId3,
       'sourceDataGeneration': 4,
@@ -3947,6 +3953,7 @@ void main() {
       request.headers.value(HttpHeaders.authorizationHeader),
       'Bearer ${_dataRekeyRecoveryToken.value}',
     );
+    _expectSyncProtocolV4Header(request);
     expect(body, <String, Object?>{
       'operationId': _mutationId3,
       'sourceDataGeneration': 4,
@@ -4053,6 +4060,7 @@ void main() {
       request.headers.value(HttpHeaders.authorizationHeader),
       'Bearer ${_dataRekeyRecoveryToken.value}',
     );
+    _expectSyncProtocolV4Header(request);
     expect(body, <String, Object?>{
       'operationId': _mutationId3,
       'sourceDataGeneration': 4,
@@ -4133,6 +4141,7 @@ void main() {
       request.headers.value(HttpHeaders.authorizationHeader),
       'Bearer ${_dataRekeyRecoveryToken.value}',
     );
+    _expectSyncProtocolV4Header(request);
     expect(body, <String, Object?>{
       'operationId': _mutationId3,
       'sourceDataGeneration': 4,
@@ -4231,6 +4240,7 @@ void main() {
       request.headers.value(HttpHeaders.authorizationHeader),
       'Bearer ${_dataRekeyRecoveryToken.value}',
     );
+    _expectSyncProtocolV4Header(request);
     expect(body, <String, Object?>{
       'operationId': _mutationId3,
       'sourceDataGeneration': 4,
@@ -7813,6 +7823,44 @@ void main() {
     expect(payload, orderedEquals(<int>[1, 2, 3]));
   });
 
+  test('v4 账户记录拒绝使用 v3 AAD 的开发期密文', () async {
+    const core = KelivoSecureCore();
+    final ark = await core.generateAccountRootKey(
+      userId: _rawUuid(_userId),
+      keyEpoch: 7,
+    );
+    const entityKey = SyncEntityKey(
+      entityType: 'conversation',
+      entityId: 'legacy-v3-record',
+    );
+    final legacyRecord = await _sealRawAccountRecord(
+      core: core,
+      ark: ark,
+      recordIdKey: entityKey,
+      frameKey: entityKey,
+      userId: _userId,
+      protocolVersion: 3,
+    );
+    final cipher = E2eeAccountRecordCipher.takeOwnership(
+      secureCore: core,
+      accountRootKey: ark,
+      userId: _userId,
+      currentKeyEpoch: 7,
+    );
+    addTearDown(cipher.close);
+
+    await expectLater(
+      cipher.open<Object?>(legacyRecord, decode: (_, _) => null),
+      throwsA(
+        isA<KelivoSecureCoreException>().having(
+          (error) => error.status,
+          'status',
+          KelivoSecureCoreStatus.recordAuthenticationFailed,
+        ),
+      ),
+    );
+  });
+
   test('账户记录重包只接受相邻密钥世代并保持认证内容', () async {
     const core = KelivoSecureCore();
     final userId = _rawUuid(_userId);
@@ -8774,7 +8822,7 @@ void main() {
     }
   });
 
-  test('v3 推送接受完整 uint32 keyEpoch 并解析三类结果', () async {
+  test('v4 推送接受完整 uint32 keyEpoch 并解析三类结果', () async {
     const core = KelivoSecureCore();
     final ark = await core.generateAccountRootKey(
       userId: _rawUuid(_userId),
@@ -8860,7 +8908,7 @@ void main() {
       request.headers.value(HttpHeaders.authorizationHeader),
       'Bearer $_fullTokenValue',
     );
-    expect(request.headers.value('x-kelivo-sync-protocol-version'), '3');
+    _expectSyncProtocolV4Header(request);
     expect(
       jsonDecode(await utf8.decoder.bind(request).join()),
       <String, Object?>{
@@ -8947,7 +8995,7 @@ void main() {
     );
   });
 
-  test('v3 推送在发网前拒绝 mutationId 与认证 operationId 不一致', () async {
+  test('v4 推送在发网前拒绝 mutationId 与认证 operationId 不一致', () async {
     const core = KelivoSecureCore();
     final ark = await core.generateAccountRootKey(
       userId: _rawUuid(_userId),
@@ -8990,7 +9038,7 @@ void main() {
     );
   });
 
-  test('v3 增量拉取接受完整 uint32 keyEpoch 并保持 put 密文不透明', () async {
+  test('v4 增量拉取接受完整 uint32 keyEpoch 并保持 put 密文不透明', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final requestFuture = server.first;
     final client = CloudSyncClient.forTesting(
@@ -9015,7 +9063,7 @@ void main() {
       request.headers.value(HttpHeaders.authorizationHeader),
       'Bearer $_fullTokenValue',
     );
-    expect(request.headers.value('x-kelivo-sync-protocol-version'), '3');
+    _expectSyncProtocolV4Header(request);
     expect(
       jsonDecode(await utf8.decoder.bind(request).join()),
       <String, Object?>{'cursor': 'cursor-1', 'limit': 1},
@@ -9071,7 +9119,7 @@ void main() {
     );
   });
 
-  test('v3 增量拉取拒绝包含 raw delete 的整页响应', () async {
+  test('v4 增量拉取拒绝包含 raw delete 的整页响应', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final requestFuture = server.first;
     final client = CloudSyncClient.forTesting(
@@ -9139,7 +9187,7 @@ void main() {
     );
   });
 
-  test('v3 增量拉取显式返回服务端要求重置游标', () async {
+  test('v4 增量拉取显式返回服务端要求重置游标', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final requestFuture = server.first;
     final client = CloudSyncClient.forTesting(
@@ -9173,7 +9221,7 @@ void main() {
     expect(await pullFuture, isA<CloudSyncResetRequired>());
   });
 
-  test('v3 增量拉取拒绝携带伪游标的 reset 响应', () async {
+  test('v4 增量拉取拒绝携带伪游标的 reset 响应', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final requestFuture = server.first;
     final client = CloudSyncClient.forTesting(
@@ -9215,7 +9263,7 @@ void main() {
     );
   });
 
-  test('v3 快照首次拉取允许同一记录的非空完整有序历史', () async {
+  test('v4 快照首次拉取允许同一记录的非空完整有序历史', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final requestFuture = server.first;
     final client = CloudSyncClient.forTesting(
@@ -9239,7 +9287,7 @@ void main() {
       request.headers.value(HttpHeaders.authorizationHeader),
       'Bearer $_fullTokenValue',
     );
-    expect(request.headers.value('x-kelivo-sync-protocol-version'), '3');
+    _expectSyncProtocolV4Header(request);
     expect(
       jsonDecode(await utf8.decoder.bind(request).join()),
       <String, Object?>{'limit': 2},
@@ -9300,7 +9348,7 @@ void main() {
     );
   });
 
-  test('v3 快照拉取拒绝乱序历史', () async {
+  test('v4 快照拉取拒绝乱序历史', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final requestFuture = server.first;
     final client = CloudSyncClient.forTesting(
@@ -9355,7 +9403,7 @@ void main() {
     );
   });
 
-  test('v3 快照拉取拒绝包含 raw deleted 的整页响应', () async {
+  test('v4 快照拉取拒绝包含 raw deleted 的整页响应', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final requestFuture = server.first;
     final client = CloudSyncClient.forTesting(
@@ -9424,7 +9472,7 @@ void main() {
     );
   });
 
-  test('v3 HTTP 边界拒绝非空增量页与快照页原地游标', () async {
+  test('v4 HTTP 边界拒绝非空增量页与快照页原地游标', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final subscription = server.listen((request) async {
       await utf8.decoder.bind(request).join();
@@ -9508,7 +9556,7 @@ void main() {
     );
   });
 
-  test('v3 推送在发网前拒绝非法标识与批量边界', () async {
+  test('v4 推送在发网前拒绝非法标识与批量边界', () async {
     const core = KelivoSecureCore();
     final ark = await core.generateAccountRootKey(
       userId: _rawUuid(_userId),
@@ -9598,7 +9646,7 @@ void main() {
     }
   });
 
-  test('v3 拉取在发网前拒绝非法分页与游标边界', () {
+  test('v4 拉取在发网前拒绝非法分页与游标边界', () {
     final client = CloudSyncClient.forTesting(baseUrl: 'http://127.0.0.1:1');
     addTearDown(() => client.close(force: true));
     final oversizedCursor = List<String>.filled(4097, 'a').join();
@@ -9628,7 +9676,7 @@ void main() {
     }
   });
 
-  test('v3 拒绝密文长度、分页数量或最终水位无效的响应', () async {
+  test('v4 拒绝密文长度、分页数量或最终水位无效的响应', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     var changeRequestCount = 0;
     final subscription = server.listen((request) async {
@@ -9716,7 +9764,7 @@ void main() {
     }
   });
 
-  test('v3 附件创建显式冻结完整会话令牌且只发送密文元数据', () async {
+  test('v4 附件创建显式冻结完整会话令牌且只发送密文元数据', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final requestFuture = server.first;
     final client = CloudSyncClient.forTesting(
@@ -9748,7 +9796,7 @@ void main() {
       request.headers.value(HttpHeaders.authorizationHeader),
       'Bearer $_fullTokenValue',
     );
-    expect(request.headers.value('x-kelivo-sync-protocol-version'), '3');
+    _expectSyncProtocolV4Header(request);
     expect(
       jsonDecode(await utf8.decoder.bind(request).join()),
       <String, Object?>{
@@ -9790,7 +9838,7 @@ void main() {
     expect(upload.createdAt, DateTime.utc(2026, 7, 29));
   });
 
-  test('v3 附件分块、提交、清单、下载和删除保持不透明密文合同', () async {
+  test('v4 附件分块、提交、清单、下载和删除保持不透明密文合同', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final requests = StreamIterator<HttpRequest>(server);
     final client = CloudSyncClient.forTesting(
@@ -9995,7 +10043,7 @@ void main() {
     expect(deleted.deletedAt, DateTime.utc(2026, 7, 29, 0, 2));
   });
 
-  test('v3 附件强类型精确执行服务端大小与 uint32 边界', () {
+  test('v4 附件强类型精确执行服务端大小与 uint32 边界', () {
     final identity = CloudSyncAttachmentIdentity(
       attachmentId: _attachmentId,
       uploadId: _uploadId,
@@ -10202,7 +10250,7 @@ void main() {
     }
   });
 
-  test('v3 附件响应拒绝未知字段、身份串线和非规范 Base64URL', () async {
+  test('v4 附件响应拒绝未知字段、身份串线和非规范 Base64URL', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final requests = StreamIterator<HttpRequest>(server);
     final client = CloudSyncClient.forTesting(
@@ -10392,7 +10440,7 @@ void main() {
     await expectLater(driftedChunkFuture, invalidResponse);
   });
 
-  test('v3 附件错误响应保留冲突代码与请求标识', () async {
+  test('v4 附件错误响应保留冲突代码与请求标识', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final requestFuture = server.first;
     final client = CloudSyncClient.forTesting(
@@ -10451,7 +10499,7 @@ void main() {
     );
   });
 
-  test('v3 协议版本错误保留服务端错误码与请求标识', () async {
+  test('v4 协议版本错误保留服务端错误码与请求标识', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final requestFuture = server.first;
     final client = CloudSyncClient.forTesting(
@@ -14328,8 +14376,12 @@ Future<void> _expectAttachmentRequest(
     request.headers.value(HttpHeaders.authorizationHeader),
     'Bearer $_fullTokenValue',
   );
-  expect(request.headers.value('x-kelivo-sync-protocol-version'), '3');
+  _expectSyncProtocolV4Header(request);
   expect(jsonDecode(await utf8.decoder.bind(request).join()), body);
+}
+
+void _expectSyncProtocolV4Header(HttpRequest request) {
+  expect(request.headers.value('x-kelivo-sync-protocol-version'), '4');
 }
 
 Future<void> _writeJsonResponse(
