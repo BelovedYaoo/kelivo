@@ -56,10 +56,10 @@ void main() {
     }
   }
 
-  test('能力门禁声明 ABI v22、账户恢复执行及受支持平台受管根退役', () async {
+  test('能力门禁声明 ABI v23、账户恢复执行及受支持平台受管根退役', () async {
     final capabilities = await core.getCapabilities();
 
-    expect(capabilities.abiVersion, 22);
+    expect(capabilities.abiVersion, 23);
     expect(capabilities.supportsOpaqueClient, isTrue);
     expect(
       capabilities.supportsDeviceE2eeCore,
@@ -87,7 +87,7 @@ void main() {
     );
   });
 
-  test('ABI v22 账户恢复结构体布局与 C header 固定尺寸一致', () {
+  test('ABI v23 账户恢复结构体布局与 C header 固定尺寸一致', () {
     expect(ffi.sizeOf<native.KelivoAccountRecoveryProofBinding>(), 120);
     expect(
       ffi.sizeOf<native.KelivoAccountRecoveryReplacementProofBinding>(),
@@ -873,7 +873,7 @@ void main() {
     expect(intent.intentSignature, hasLength(64));
     expect(() => intent.intentDigest[0] ^= 1, throwsUnsupportedError);
     expect(() => intent.intentSignature[0] ^= 1, throwsUnsupportedError);
-    await core.verifySelfRevocationIntent(
+    final verifiedDigest = await core.verifySelfRevocationIntent(
       signingPublicKey: publicKeys.signingPublicKey,
       userId: userId,
       deviceId: deviceId,
@@ -883,8 +883,10 @@ void main() {
       expectedKeyEpoch: 11,
       expectedMembershipManifestDigest: manifestDigest,
       expiresAtMs: 1800000000000,
-      intent: intent,
+      signature: intent.intentSignature,
     );
+    expect(verifiedDigest, orderedEquals(intent.intentDigest));
+    expect(() => verifiedDigest[0] ^= 1, throwsUnsupportedError);
 
     await expectLater(
       core.verifySelfRevocationIntent(
@@ -897,7 +899,7 @@ void main() {
         expectedKeyEpoch: 11,
         expectedMembershipManifestDigest: manifestDigest,
         expiresAtMs: 1800000000000,
-        intent: intent,
+        signature: intent.intentSignature,
       ),
       throwsA(
         isA<KelivoSecureCoreException>().having(
@@ -908,7 +910,8 @@ void main() {
       ),
     );
 
-    final tamperedDigest = Uint8List.fromList(intent.intentDigest)..[0] ^= 1;
+    final tamperedSignature = Uint8List.fromList(intent.intentSignature)
+      ..[0] ^= 1;
     await expectLater(
       core.verifySelfRevocationIntent(
         signingPublicKey: publicKeys.signingPublicKey,
@@ -920,10 +923,7 @@ void main() {
         expectedKeyEpoch: 11,
         expectedMembershipManifestDigest: manifestDigest,
         expiresAtMs: 1800000000000,
-        intent: KelivoSelfRevocationIntent(
-          intentDigest: tamperedDigest,
-          intentSignature: intent.intentSignature,
-        ),
+        signature: tamperedSignature,
       ),
       throwsA(
         isA<KelivoSecureCoreException>().having(
