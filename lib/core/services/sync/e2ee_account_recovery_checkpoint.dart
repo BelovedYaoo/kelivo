@@ -1075,6 +1075,7 @@ int _nextActionCode(E2eeAccountRecoveryNextAction? action) => switch (action) {
   E2eeAccountRecoveryNextAction.recoverReplace => 2,
   E2eeAccountRecoveryNextAction.finishFirstDataRekey => 3,
   E2eeAccountRecoveryNextAction.finishSecondDataRekey => 4,
+  E2eeAccountRecoveryNextAction.createReplacementChallenge => 5,
 };
 
 E2eeAccountRecoveryNextAction _parseNextAction(int value) => switch (value) {
@@ -1082,6 +1083,7 @@ E2eeAccountRecoveryNextAction _parseNextAction(int value) => switch (value) {
   2 => E2eeAccountRecoveryNextAction.recoverReplace,
   3 => E2eeAccountRecoveryNextAction.finishFirstDataRekey,
   4 => E2eeAccountRecoveryNextAction.finishSecondDataRekey,
+  5 => E2eeAccountRecoveryNextAction.createReplacementChallenge,
   _ => throw const FormatException('账户恢复 checkpoint 下一步无效'),
 };
 

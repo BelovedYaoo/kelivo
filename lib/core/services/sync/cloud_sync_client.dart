@@ -2735,6 +2735,8 @@ E2eeAccountRecoveryAuthorizedState _parseAccountRecoveryAuthorizedState(
     'recover-resume' => E2eeAccountRecoveryNextAction.recoverResume,
     'finish-first-data-rekey' =>
       E2eeAccountRecoveryNextAction.finishFirstDataRekey,
+    'create-replacement-challenge' =>
+      E2eeAccountRecoveryNextAction.createReplacementChallenge,
     'recover-replace' => E2eeAccountRecoveryNextAction.recoverReplace,
     'finish-second-data-rekey' =>
       E2eeAccountRecoveryNextAction.finishSecondDataRekey,

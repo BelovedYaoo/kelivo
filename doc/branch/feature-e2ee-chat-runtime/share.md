@@ -97,3 +97,4 @@
 - 已集成：设备撤销与 data-rekey、二阶段账户恢复 ABI20、恢复介质 v2 及持久明文退役已在同一发布批次完成合并；Native/协议严格 Clippy、Native 格式、Android Workmanager 单测、MCP VM 测试、根项目定向分析与相关 35/130 项回归通过。协议格式仅剩既有 #97 的模块导出顺序，下一步重新生成 OpenAPI 客户端并收敛最终 App/API 契约门禁。
 - 已完成：从 `kelivo-api@b025cb0` 的 OpenAPI SHA-256 `907F0B…E2385F7B` 重建 Dart 客户端；App replacement 提交以强类型联合支持首次 challenge 与独立第二 challenge 授权，checkpoint 硬切 v5 持久化对应材料。注册恢复夹具同步记录域 v2/帧 v3/676 字节恢复介质，聊天 payload 夹具同步 v3 双代次附件字段；CloudSync 211 项、授权与固定向量 39 项、checkpoint 1 项及根分析通过。
 - 已完成：App 接入 `/api/auth/account-recovery/replacement-challenge/create`，响应必须同时绑定创建请求、目标设备、成员 head 与首轮 data-rekey 完成证明；Native 适配器接入 ABI20 第二挑战 proof，并逐项核对 challenge、attempt、成员操作、完成证明与 replacement-only execution。相关 CloudSync/恢复/native 190 项联合回归通过。
+- 已完成：客户端严格接入服务端 `create-replacement-challenge` 恢复动作，首轮换钥完成后只能创建独立第二挑战，不再误判为可直接提交 replacement；协议定向分析与回归通过。

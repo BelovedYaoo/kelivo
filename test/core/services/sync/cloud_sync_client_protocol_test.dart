@@ -2368,6 +2368,30 @@ void main() {
       <String, Object?>{
         'protocolVersion': e2eeAccountRecoveryProtocolVersion,
         'attemptId': _attemptId1,
+        'status': 'resume-committed',
+        'nextAction': 'create-replacement-challenge',
+        'authorizedAt': '2026-08-01T01:00:00.000Z',
+        'recoveryTokenExpiresAt': '2026-08-01T03:00:00.000Z',
+        'securityState': _securityStateDataForTest(
+          generation: 5,
+          keyEpoch: 5,
+          dataRekeyPhase: 'ready',
+          membershipManifest: manifest,
+          recoveryCapsuleVersion: 1,
+          recoveryCapsule: capsule,
+          operationId: _mutationId4,
+        ),
+        'dataState': <String, Object?>{
+          'phase': 'ready',
+          'dataGeneration': 8,
+          'dataKeyEpoch': 5,
+          'operationId': null,
+          'targetKeyEpoch': null,
+        },
+      },
+      <String, Object?>{
+        'protocolVersion': e2eeAccountRecoveryProtocolVersion,
+        'attemptId': _attemptId1,
         'status': 'replacement-committed',
         'nextAction': 'finish-second-data-rekey',
         'authorizedAt': '2026-08-01T01:00:00.000Z',
@@ -2412,6 +2436,9 @@ void main() {
     final resume = await client.getAuthorizedState(
       recoveryToken: recoveryToken,
     );
+    final replacementChallenge = await client.getAuthorizedState(
+      recoveryToken: recoveryToken,
+    );
     final replacement = await client.getAuthorizedState(
       recoveryToken: recoveryToken,
     );
@@ -2420,6 +2447,10 @@ void main() {
     expect(
       resume.nextAction,
       E2eeAccountRecoveryNextAction.finishFirstDataRekey,
+    );
+    expect(
+      replacementChallenge.nextAction,
+      E2eeAccountRecoveryNextAction.createReplacementChallenge,
     );
     expect(
       replacement.status,

@@ -36,6 +36,7 @@ enum E2eeAccountRecoveryRemoteStatus {
 enum E2eeAccountRecoveryNextAction {
   recoverResume,
   finishFirstDataRekey,
+  createReplacementChallenge,
   recoverReplace,
   finishSecondDataRekey,
 }
@@ -1993,7 +1994,7 @@ bool _remoteStatusAllowsAction(
       E2eeAccountRecoveryRemoteStatus.resumeCommitted,
       E2eeAccountRecoveryDataPhase.ready,
     ) =>
-      action == E2eeAccountRecoveryNextAction.recoverReplace,
+      action == E2eeAccountRecoveryNextAction.createReplacementChallenge,
     (
       E2eeAccountRecoveryRemoteStatus.resumeCommitted,
       E2eeAccountRecoveryDataPhase.rekeyPending,
