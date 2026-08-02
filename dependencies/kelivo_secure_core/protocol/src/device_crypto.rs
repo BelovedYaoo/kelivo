@@ -43,6 +43,12 @@ pub const DATA_REKEY_COMPLETION_PROOF_SIGNATURE_LENGTH: usize = 64;
 const DATA_REKEY_COMPLETION_PROOF_DOMAIN: [u8; 32] = *b"kelivo-data-rekey-completion-v2\0";
 const DATA_REKEY_COMPLETION_PROOF_DIGEST_DOMAIN: &[u8] =
     b"kelivo-data-rekey-completion-proof-digest-v2\0";
+pub const SELF_REVOCATION_INTENT_DIGEST_LENGTH: usize = SHA256_DIGEST_LENGTH;
+pub const SELF_REVOCATION_INTENT_SIGNATURE_LENGTH: usize = DEVICE_PROOF_SIGNATURE_LENGTH;
+pub const SELF_REVOCATION_MAX_GENERATION: u32 = 0x7fff_fffe;
+pub const SELF_REVOCATION_MAX_KEY_EPOCH: u32 = 0xffff_fffe;
+const SELF_REVOCATION_INTENT_FRAME_LENGTH: usize = 145;
+const SELF_REVOCATION_INTENT_DOMAIN: [u8; 33] = *b"kelivo.self-revocation.intent.v3\0";
 pub const PAIRING_SECRET_LENGTH: usize = 32;
 pub const PAIRING_AUTHENTICATOR_LENGTH: usize = 32;
 const PAIRING_AUTHENTICATOR_INFO: &[u8] = b"kelivo.pairing.authenticator.v1\0";
@@ -134,6 +140,17 @@ const DATA_REKEY_STAGED_ATTACHMENT_COUNT_OFFSET: usize =
     DATA_REKEY_STAGED_RECORD_COUNT_OFFSET + size_of::<u32>();
 const DATA_REKEY_STAGED_CIPHERTEXT_SET_DIGEST_OFFSET: usize =
     DATA_REKEY_STAGED_ATTACHMENT_COUNT_OFFSET + size_of::<u32>();
+const SELF_REVOCATION_USER_ID_OFFSET: usize = SELF_REVOCATION_INTENT_DOMAIN.len();
+const SELF_REVOCATION_DEVICE_ID_OFFSET: usize = SELF_REVOCATION_USER_ID_OFFSET + UUID_LENGTH;
+const SELF_REVOCATION_MUTATION_ID_OFFSET: usize = SELF_REVOCATION_DEVICE_ID_OFFSET + UUID_LENGTH;
+const SELF_REVOCATION_OPERATION_ID_OFFSET: usize = SELF_REVOCATION_MUTATION_ID_OFFSET + UUID_LENGTH;
+const SELF_REVOCATION_GENERATION_OFFSET: usize = SELF_REVOCATION_OPERATION_ID_OFFSET + UUID_LENGTH;
+const SELF_REVOCATION_KEY_EPOCH_OFFSET: usize =
+    SELF_REVOCATION_GENERATION_OFFSET + size_of::<u32>();
+const SELF_REVOCATION_MANIFEST_DIGEST_OFFSET: usize =
+    SELF_REVOCATION_KEY_EPOCH_OFFSET + size_of::<u32>();
+const SELF_REVOCATION_EXPIRES_AT_OFFSET: usize =
+    SELF_REVOCATION_MANIFEST_DIGEST_OFFSET + SHA256_DIGEST_LENGTH;
 const ARK_USER_OFFSET: usize = ARK_ENVELOPE_HEADER_LENGTH;
 const ARK_ISSUER_DEVICE_OFFSET: usize = ARK_USER_OFFSET + UUID_LENGTH;
 const ARK_TARGET_DEVICE_OFFSET: usize = ARK_ISSUER_DEVICE_OFFSET + UUID_LENGTH;
@@ -159,6 +176,9 @@ const _: () = {
     assert!(
         DATA_REKEY_STAGED_CIPHERTEXT_SET_DIGEST_OFFSET + SHA256_DIGEST_LENGTH
             == DATA_REKEY_COMPLETION_PROOF_FRAME_LENGTH
+    );
+    assert!(
+        SELF_REVOCATION_EXPIRES_AT_OFFSET + size_of::<u64>() == SELF_REVOCATION_INTENT_FRAME_LENGTH
     );
 };
 
@@ -195,6 +215,18 @@ pub enum DeviceCryptoError {
         actual: usize,
     },
     DataRekeyCompletionProofSignatureInvalid,
+    InvalidSelfRevocationGeneration,
+    InvalidSelfRevocationKeyEpoch,
+    InvalidSelfRevocationIntentDigestLength {
+        expected: usize,
+        actual: usize,
+    },
+    InvalidSelfRevocationIntentSignatureLength {
+        expected: usize,
+        actual: usize,
+    },
+    SelfRevocationIntentDigestMismatch,
+    SelfRevocationIntentSignatureInvalid,
     InvalidKeyEpoch,
     ArkKeyEpochNotFound,
     ArkKeyEpochNotIncreasing,
@@ -302,6 +334,24 @@ impl fmt::Display for DeviceCryptoError {
             Self::DataRekeyCompletionProofSignatureInvalid => {
                 formatter.write_str("数据重加密完成证明签名无效")
             }
+            Self::InvalidSelfRevocationGeneration => {
+                formatter.write_str("自撤销意图成员代次超出协议范围")
+            }
+            Self::InvalidSelfRevocationKeyEpoch => {
+                formatter.write_str("自撤销意图密钥代次超出协议范围")
+            }
+            Self::InvalidSelfRevocationIntentDigestLength { expected, actual } => write!(
+                formatter,
+                "自撤销意图摘要长度无效，预期 {expected}，实际 {actual}"
+            ),
+            Self::InvalidSelfRevocationIntentSignatureLength { expected, actual } => write!(
+                formatter,
+                "自撤销意图签名长度无效，预期 {expected}，实际 {actual}"
+            ),
+            Self::SelfRevocationIntentDigestMismatch => {
+                formatter.write_str("自撤销意图摘要与规范字段不匹配")
+            }
+            Self::SelfRevocationIntentSignatureInvalid => formatter.write_str("自撤销意图签名无效"),
             Self::InvalidKeyEpoch => formatter.write_str("ARK 密钥代次无效"),
             Self::ArkKeyEpochNotFound => formatter.write_str("ARK 密钥环中不存在指定代次"),
             Self::ArkKeyEpochNotIncreasing => {
@@ -416,6 +466,8 @@ define_uuid_v4!(DeviceProofAttemptId);
 define_uuid_v4!(AccountContextId);
 define_uuid_v4!(UserId);
 define_uuid_v4!(DeviceId);
+define_uuid_v4!(SelfRevocationMutationId);
+define_uuid_v4!(SelfRevocationOperationId);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DeviceProofChallenge([u8; DEVICE_PROOF_CHALLENGE_LENGTH]);
@@ -709,6 +761,20 @@ impl DeviceIdentity {
         ))
     }
 
+    pub fn create_self_revocation_intent(
+        &self,
+        fields: SelfRevocationIntentFields,
+    ) -> Result<SelfRevocationIntent, DeviceCryptoError> {
+        let digest = self_revocation_intent_digest(fields)?;
+        let signature = SelfRevocationIntentSignature(
+            self.signing
+                .signing_key()
+                .sign(digest.as_bytes())
+                .to_bytes(),
+        );
+        Ok(SelfRevocationIntent { digest, signature })
+    }
+
     fn build_and_sign_proof(
         &self,
         kind: DeviceProofKind,
@@ -819,6 +885,130 @@ impl DataRekeyCompletionProofSignature {
     pub const fn as_bytes(&self) -> &[u8; DATA_REKEY_COMPLETION_PROOF_SIGNATURE_LENGTH] {
         &self.0
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SelfRevocationIntentFields {
+    pub user_id: UserId,
+    pub device_id: DeviceId,
+    pub mutation_id: SelfRevocationMutationId,
+    pub operation_id: SelfRevocationOperationId,
+    pub expected_generation: u32,
+    pub expected_key_epoch: u32,
+    pub expected_membership_manifest_digest: Sha256Digest,
+    pub expires_at_ms: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SelfRevocationIntentDigest([u8; SELF_REVOCATION_INTENT_DIGEST_LENGTH]);
+
+impl SelfRevocationIntentDigest {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, DeviceCryptoError> {
+        if bytes.len() != SELF_REVOCATION_INTENT_DIGEST_LENGTH {
+            return Err(DeviceCryptoError::InvalidSelfRevocationIntentDigestLength {
+                expected: SELF_REVOCATION_INTENT_DIGEST_LENGTH,
+                actual: bytes.len(),
+            });
+        }
+        Ok(Self(copy_array(bytes)))
+    }
+
+    pub const fn as_bytes(&self) -> &[u8; SELF_REVOCATION_INTENT_DIGEST_LENGTH] {
+        &self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SelfRevocationIntentSignature([u8; SELF_REVOCATION_INTENT_SIGNATURE_LENGTH]);
+
+impl SelfRevocationIntentSignature {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, DeviceCryptoError> {
+        if bytes.len() != SELF_REVOCATION_INTENT_SIGNATURE_LENGTH {
+            return Err(
+                DeviceCryptoError::InvalidSelfRevocationIntentSignatureLength {
+                    expected: SELF_REVOCATION_INTENT_SIGNATURE_LENGTH,
+                    actual: bytes.len(),
+                },
+            );
+        }
+        Ok(Self(copy_array(bytes)))
+    }
+
+    pub const fn as_bytes(&self) -> &[u8; SELF_REVOCATION_INTENT_SIGNATURE_LENGTH] {
+        &self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SelfRevocationIntent {
+    digest: SelfRevocationIntentDigest,
+    signature: SelfRevocationIntentSignature,
+}
+
+impl SelfRevocationIntent {
+    pub const fn digest(&self) -> &SelfRevocationIntentDigest {
+        &self.digest
+    }
+
+    pub const fn signature(&self) -> &SelfRevocationIntentSignature {
+        &self.signature
+    }
+}
+
+pub fn verify_self_revocation_intent(
+    signing_public_key: &DeviceSigningPublicKey,
+    fields: SelfRevocationIntentFields,
+    intent_digest: &[u8],
+    signature: &[u8],
+) -> Result<(), DeviceCryptoError> {
+    let expected_digest = self_revocation_intent_digest(fields)?;
+    let intent_digest = SelfRevocationIntentDigest::from_bytes(intent_digest)?;
+    if intent_digest != expected_digest {
+        return Err(DeviceCryptoError::SelfRevocationIntentDigestMismatch);
+    }
+    let signature = SelfRevocationIntentSignature::from_bytes(signature)?;
+    let verifying_key = signing_public_key.verifying_key()?;
+    if !verify_strict_device_signature(
+        &verifying_key,
+        intent_digest.as_bytes(),
+        &Signature::from_bytes(&signature.0),
+    ) {
+        return Err(DeviceCryptoError::SelfRevocationIntentSignatureInvalid);
+    }
+    Ok(())
+}
+
+fn self_revocation_intent_digest(
+    fields: SelfRevocationIntentFields,
+) -> Result<SelfRevocationIntentDigest, DeviceCryptoError> {
+    if !(1..=SELF_REVOCATION_MAX_GENERATION).contains(&fields.expected_generation) {
+        return Err(DeviceCryptoError::InvalidSelfRevocationGeneration);
+    }
+    if !(1..=SELF_REVOCATION_MAX_KEY_EPOCH).contains(&fields.expected_key_epoch) {
+        return Err(DeviceCryptoError::InvalidSelfRevocationKeyEpoch);
+    }
+
+    let mut frame = Zeroizing::new([0_u8; SELF_REVOCATION_INTENT_FRAME_LENGTH]);
+    frame[..SELF_REVOCATION_USER_ID_OFFSET].copy_from_slice(&SELF_REVOCATION_INTENT_DOMAIN);
+    frame[SELF_REVOCATION_USER_ID_OFFSET..SELF_REVOCATION_DEVICE_ID_OFFSET]
+        .copy_from_slice(fields.user_id.as_bytes());
+    frame[SELF_REVOCATION_DEVICE_ID_OFFSET..SELF_REVOCATION_MUTATION_ID_OFFSET]
+        .copy_from_slice(fields.device_id.as_bytes());
+    frame[SELF_REVOCATION_MUTATION_ID_OFFSET..SELF_REVOCATION_OPERATION_ID_OFFSET]
+        .copy_from_slice(fields.mutation_id.as_bytes());
+    frame[SELF_REVOCATION_OPERATION_ID_OFFSET..SELF_REVOCATION_GENERATION_OFFSET]
+        .copy_from_slice(fields.operation_id.as_bytes());
+    frame[SELF_REVOCATION_GENERATION_OFFSET..SELF_REVOCATION_KEY_EPOCH_OFFSET]
+        .copy_from_slice(&fields.expected_generation.to_be_bytes());
+    frame[SELF_REVOCATION_KEY_EPOCH_OFFSET..SELF_REVOCATION_MANIFEST_DIGEST_OFFSET]
+        .copy_from_slice(&fields.expected_key_epoch.to_be_bytes());
+    frame[SELF_REVOCATION_MANIFEST_DIGEST_OFFSET..SELF_REVOCATION_EXPIRES_AT_OFFSET]
+        .copy_from_slice(fields.expected_membership_manifest_digest.as_bytes());
+    frame[SELF_REVOCATION_EXPIRES_AT_OFFSET..].copy_from_slice(&fields.expires_at_ms.to_be_bytes());
+
+    Ok(SelfRevocationIntentDigest(
+        Sha256::digest(frame.as_slice()).into(),
+    ))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -3499,6 +3689,171 @@ mod tests {
             data_rekey_completion_proof_digest(&proof_frame, &tampered_signature)
                 .expect("固定长度篡改签名仍应产生不同摘要")
         );
+    }
+
+    #[test]
+    fn self_revocation_intent_matches_server_fixed_vector_and_binds_every_field() {
+        let identity =
+            DeviceIdentity::from_private_bytes([0x11; 32], [0x22; 32]).expect("设备身份应可构造");
+        let fields = SelfRevocationIntentFields {
+            user_id: UserId::new(uuid_v4(0x11)).expect("用户标识应有效"),
+            device_id: DeviceId::new(uuid_v4(0x22)).expect("设备标识应有效"),
+            mutation_id: SelfRevocationMutationId::new(uuid_v4(0x33)).expect("变更标识应有效"),
+            operation_id: SelfRevocationOperationId::new(uuid_v4(0x44)).expect("操作标识应有效"),
+            expected_generation: 7,
+            expected_key_epoch: 11,
+            expected_membership_manifest_digest: Sha256Digest::from_bytes([0x55; 32]),
+            expires_at_ms: 1_800_000_000_000,
+        };
+        let expected_digest =
+            hex_array::<32>("e0862f974326e54251cd24ee7a9f513d872a40f209737f5c5ae814fff6a1e9f1");
+        let expected_signature = hex_array::<64>(concat!(
+            "d5a58d9d52e605ae44e510df946c5ab146b3c2370f2510186903eef7fae43614",
+            "3c49e48172c381cdbfd37e914050a731354113de1a8c344af5acfd4f0275430f"
+        ));
+
+        let intent = identity
+            .create_self_revocation_intent(fields)
+            .expect("规范自撤销意图应可创建");
+        assert_eq!(intent.digest().as_bytes(), &expected_digest);
+        assert_eq!(intent.signature().as_bytes(), &expected_signature);
+        verify_self_revocation_intent(
+            &identity.public_keys().signing,
+            fields,
+            intent.digest().as_bytes(),
+            intent.signature().as_bytes(),
+        )
+        .expect("服务器固定向量应通过严格验签");
+
+        let tampered_fields = [
+            SelfRevocationIntentFields {
+                user_id: UserId::new(uuid_v4(0x12)).expect("用户标识应有效"),
+                ..fields
+            },
+            SelfRevocationIntentFields {
+                device_id: DeviceId::new(uuid_v4(0x23)).expect("设备标识应有效"),
+                ..fields
+            },
+            SelfRevocationIntentFields {
+                mutation_id: SelfRevocationMutationId::new(uuid_v4(0x34)).expect("变更标识应有效"),
+                ..fields
+            },
+            SelfRevocationIntentFields {
+                operation_id: SelfRevocationOperationId::new(uuid_v4(0x45))
+                    .expect("操作标识应有效"),
+                ..fields
+            },
+            SelfRevocationIntentFields {
+                expected_generation: fields.expected_generation + 1,
+                ..fields
+            },
+            SelfRevocationIntentFields {
+                expected_key_epoch: fields.expected_key_epoch + 1,
+                ..fields
+            },
+            SelfRevocationIntentFields {
+                expected_membership_manifest_digest: Sha256Digest::from_bytes([0x56; 32]),
+                ..fields
+            },
+            SelfRevocationIntentFields {
+                expires_at_ms: fields.expires_at_ms + 1,
+                ..fields
+            },
+        ];
+        for tampered in tampered_fields {
+            assert!(matches!(
+                verify_self_revocation_intent(
+                    &identity.public_keys().signing,
+                    tampered,
+                    intent.digest().as_bytes(),
+                    intent.signature().as_bytes(),
+                ),
+                Err(DeviceCryptoError::SelfRevocationIntentDigestMismatch)
+            ));
+        }
+
+        let mut tampered_digest = *intent.digest().as_bytes();
+        tampered_digest[0] ^= 1;
+        assert!(matches!(
+            verify_self_revocation_intent(
+                &identity.public_keys().signing,
+                fields,
+                &tampered_digest,
+                intent.signature().as_bytes(),
+            ),
+            Err(DeviceCryptoError::SelfRevocationIntentDigestMismatch)
+        ));
+
+        let mut tampered_signature = *intent.signature().as_bytes();
+        tampered_signature[0] ^= 1;
+        assert!(matches!(
+            verify_self_revocation_intent(
+                &identity.public_keys().signing,
+                fields,
+                intent.digest().as_bytes(),
+                &tampered_signature,
+            ),
+            Err(DeviceCryptoError::SelfRevocationIntentSignatureInvalid)
+        ));
+
+        let other_identity =
+            DeviceIdentity::from_private_bytes([0x12; 32], [0x23; 32]).expect("设备身份应可构造");
+        assert!(matches!(
+            verify_self_revocation_intent(
+                &other_identity.public_keys().signing,
+                fields,
+                intent.digest().as_bytes(),
+                intent.signature().as_bytes(),
+            ),
+            Err(DeviceCryptoError::SelfRevocationIntentSignatureInvalid)
+        ));
+    }
+
+    #[test]
+    fn self_revocation_intent_enforces_generation_and_epoch_boundaries() {
+        let identity =
+            DeviceIdentity::from_private_bytes([0x11; 32], [0x22; 32]).expect("设备身份应可构造");
+        let base = SelfRevocationIntentFields {
+            user_id: UserId::new(uuid_v4(0x11)).expect("用户标识应有效"),
+            device_id: DeviceId::new(uuid_v4(0x22)).expect("设备标识应有效"),
+            mutation_id: SelfRevocationMutationId::new(uuid_v4(0x33)).expect("变更标识应有效"),
+            operation_id: SelfRevocationOperationId::new(uuid_v4(0x44)).expect("操作标识应有效"),
+            expected_generation: 1,
+            expected_key_epoch: 1,
+            expected_membership_manifest_digest: Sha256Digest::from_bytes([0x55; 32]),
+            expires_at_ms: 0,
+        };
+
+        identity
+            .create_self_revocation_intent(base)
+            .expect("零时间戳属于 u64 规范编码范围");
+        identity
+            .create_self_revocation_intent(SelfRevocationIntentFields {
+                expected_generation: SELF_REVOCATION_MAX_GENERATION,
+                expected_key_epoch: SELF_REVOCATION_MAX_KEY_EPOCH,
+                expires_at_ms: u64::MAX,
+                ..base
+            })
+            .expect("字段上界与 u64 时间戳上界应可编码");
+
+        for expected_generation in [0, SELF_REVOCATION_MAX_GENERATION + 1] {
+            assert!(matches!(
+                identity.create_self_revocation_intent(SelfRevocationIntentFields {
+                    expected_generation,
+                    ..base
+                }),
+                Err(DeviceCryptoError::InvalidSelfRevocationGeneration)
+            ));
+        }
+        for expected_key_epoch in [0, SELF_REVOCATION_MAX_KEY_EPOCH + 1] {
+            assert!(matches!(
+                identity.create_self_revocation_intent(SelfRevocationIntentFields {
+                    expected_key_epoch,
+                    ..base
+                }),
+                Err(DeviceCryptoError::InvalidSelfRevocationKeyEpoch)
+            ));
+        }
     }
 
     #[test]

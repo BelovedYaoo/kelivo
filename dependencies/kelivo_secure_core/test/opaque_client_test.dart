@@ -56,10 +56,10 @@ void main() {
     }
   }
 
-  test('能力门禁声明 ABI v21、账户恢复执行及受支持平台受管根退役', () async {
+  test('能力门禁声明 ABI v22、账户恢复执行及受支持平台受管根退役', () async {
     final capabilities = await core.getCapabilities();
 
-    expect(capabilities.abiVersion, 21);
+    expect(capabilities.abiVersion, 22);
     expect(capabilities.supportsOpaqueClient, isTrue);
     expect(
       capabilities.supportsDeviceE2eeCore,
@@ -87,7 +87,7 @@ void main() {
     );
   });
 
-  test('ABI v21 账户恢复结构体布局与 C header 固定尺寸一致', () {
+  test('ABI v22 账户恢复结构体布局与 C header 固定尺寸一致', () {
     expect(ffi.sizeOf<native.KelivoAccountRecoveryProofBinding>(), 120);
     expect(
       ffi.sizeOf<native.KelivoAccountRecoveryReplacementProofBinding>(),
@@ -840,6 +840,192 @@ void main() {
     );
 
     await core.closeDeviceIdentity(otherIdentity);
+    await core.closeDeviceIdentity(identity);
+  });
+
+  test('当前设备自撤销意图匹配服务端固定摘要并严格绑定全部字段', () async {
+    if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
+    final identity = await core.generateDeviceIdentity();
+    final publicKeys = await core.readDevicePublicKeys(identity);
+    final userId = accountId(0x11);
+    final deviceId = accountId(0x22);
+    final mutationId = accountId(0x33);
+    final operationId = accountId(0x44);
+    final manifestDigest = Uint8List(32)..fillRange(0, 32, 0x55);
+
+    final intent = await core.createSelfRevocationIntent(
+      identity,
+      userId: userId,
+      deviceId: deviceId,
+      mutationId: mutationId,
+      operationId: operationId,
+      expectedGeneration: 7,
+      expectedKeyEpoch: 11,
+      expectedMembershipManifestDigest: manifestDigest,
+      expiresAtMs: 1800000000000,
+    );
+    expect(
+      intent.intentDigest,
+      hexBytes(
+        'e0862f974326e54251cd24ee7a9f513d872a40f209737f5c5ae814fff6a1e9f1',
+      ),
+    );
+    expect(intent.intentSignature, hasLength(64));
+    expect(() => intent.intentDigest[0] ^= 1, throwsUnsupportedError);
+    expect(() => intent.intentSignature[0] ^= 1, throwsUnsupportedError);
+    await core.verifySelfRevocationIntent(
+      signingPublicKey: publicKeys.signingPublicKey,
+      userId: userId,
+      deviceId: deviceId,
+      mutationId: mutationId,
+      operationId: operationId,
+      expectedGeneration: 7,
+      expectedKeyEpoch: 11,
+      expectedMembershipManifestDigest: manifestDigest,
+      expiresAtMs: 1800000000000,
+      intent: intent,
+    );
+
+    await expectLater(
+      core.verifySelfRevocationIntent(
+        signingPublicKey: publicKeys.signingPublicKey,
+        userId: userId,
+        deviceId: deviceId,
+        mutationId: mutationId,
+        operationId: accountId(0x45),
+        expectedGeneration: 7,
+        expectedKeyEpoch: 11,
+        expectedMembershipManifestDigest: manifestDigest,
+        expiresAtMs: 1800000000000,
+        intent: intent,
+      ),
+      throwsA(
+        isA<KelivoSecureCoreException>().having(
+          (error) => error.status,
+          'status',
+          KelivoSecureCoreStatus.deviceAuthenticationFailed,
+        ),
+      ),
+    );
+
+    final tamperedDigest = Uint8List.fromList(intent.intentDigest)..[0] ^= 1;
+    await expectLater(
+      core.verifySelfRevocationIntent(
+        signingPublicKey: publicKeys.signingPublicKey,
+        userId: userId,
+        deviceId: deviceId,
+        mutationId: mutationId,
+        operationId: operationId,
+        expectedGeneration: 7,
+        expectedKeyEpoch: 11,
+        expectedMembershipManifestDigest: manifestDigest,
+        expiresAtMs: 1800000000000,
+        intent: KelivoSelfRevocationIntent(
+          intentDigest: tamperedDigest,
+          intentSignature: intent.intentSignature,
+        ),
+      ),
+      throwsA(
+        isA<KelivoSecureCoreException>().having(
+          (error) => error.status,
+          'status',
+          KelivoSecureCoreStatus.deviceAuthenticationFailed,
+        ),
+      ),
+    );
+
+    await core.closeDeviceIdentity(identity);
+  });
+
+  test('当前设备自撤销意图执行 UUID、代次与时间戳边界校验', () async {
+    if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
+    final identity = await core.generateDeviceIdentity();
+    final validUuid = accountId(0x31);
+    final manifestDigest = Uint8List(32)..fillRange(0, 32, 0x32);
+
+    for (final bounds in <(int, int, int)>[
+      (1, 1, 0),
+      (0x7ffffffe, 0xfffffffe, 0x7fffffffffffffff),
+    ]) {
+      final intent = await core.createSelfRevocationIntent(
+        identity,
+        userId: validUuid,
+        deviceId: accountId(0x33),
+        mutationId: accountId(0x34),
+        operationId: accountId(0x35),
+        expectedGeneration: bounds.$1,
+        expectedKeyEpoch: bounds.$2,
+        expectedMembershipManifestDigest: manifestDigest,
+        expiresAtMs: bounds.$3,
+      );
+      expect(intent.intentDigest, hasLength(32));
+      expect(intent.intentSignature, hasLength(64));
+    }
+
+    for (final invalidGeneration in <int>[0, 0x7fffffff]) {
+      await expectLater(
+        core.createSelfRevocationIntent(
+          identity,
+          userId: validUuid,
+          deviceId: accountId(0x33),
+          mutationId: accountId(0x34),
+          operationId: accountId(0x35),
+          expectedGeneration: invalidGeneration,
+          expectedKeyEpoch: 1,
+          expectedMembershipManifestDigest: manifestDigest,
+          expiresAtMs: 0,
+        ),
+        throwsArgumentError,
+      );
+    }
+    for (final invalidKeyEpoch in <int>[0, 0xffffffff]) {
+      await expectLater(
+        core.createSelfRevocationIntent(
+          identity,
+          userId: validUuid,
+          deviceId: accountId(0x33),
+          mutationId: accountId(0x34),
+          operationId: accountId(0x35),
+          expectedGeneration: 1,
+          expectedKeyEpoch: invalidKeyEpoch,
+          expectedMembershipManifestDigest: manifestDigest,
+          expiresAtMs: 0,
+        ),
+        throwsArgumentError,
+      );
+    }
+    for (final invalidExpiresAtMs in <int>[-1, 0x8000000000000000]) {
+      await expectLater(
+        core.createSelfRevocationIntent(
+          identity,
+          userId: validUuid,
+          deviceId: accountId(0x33),
+          mutationId: accountId(0x34),
+          operationId: accountId(0x35),
+          expectedGeneration: 1,
+          expectedKeyEpoch: 1,
+          expectedMembershipManifestDigest: manifestDigest,
+          expiresAtMs: invalidExpiresAtMs,
+        ),
+        throwsArgumentError,
+      );
+    }
+    final invalidUuid = Uint8List.fromList(validUuid)..[6] &= 0x0f;
+    await expectLater(
+      core.createSelfRevocationIntent(
+        identity,
+        userId: invalidUuid,
+        deviceId: accountId(0x33),
+        mutationId: accountId(0x34),
+        operationId: accountId(0x35),
+        expectedGeneration: 1,
+        expectedKeyEpoch: 1,
+        expectedMembershipManifestDigest: manifestDigest,
+        expiresAtMs: 0,
+      ),
+      throwsArgumentError,
+    );
+
     await core.closeDeviceIdentity(identity);
   });
 

@@ -762,6 +762,8 @@ fn device_error_status(error: crypto::DeviceCryptoError) -> KelivoStatus {
         Error::DeviceProofBindingMismatch
         | Error::DeviceProofSignatureInvalid
         | Error::DataRekeyCompletionProofSignatureInvalid
+        | Error::SelfRevocationIntentDigestMismatch
+        | Error::SelfRevocationIntentSignatureInvalid
         | Error::ArkEnvelopeBindingMismatch
         | Error::ArkEnvelopeSignatureInvalid
         | Error::AccountTrustSignatureInvalid
@@ -795,6 +797,10 @@ fn device_error_status(error: crypto::DeviceCryptoError) -> KelivoStatus {
         | Error::InvalidDataRekeyCompletionProofFrameLength { .. }
         | Error::InvalidDataRekeyCompletionProofFrame
         | Error::InvalidDataRekeyCompletionProofSignatureLength { .. }
+        | Error::InvalidSelfRevocationGeneration
+        | Error::InvalidSelfRevocationKeyEpoch
+        | Error::InvalidSelfRevocationIntentDigestLength { .. }
+        | Error::InvalidSelfRevocationIntentSignatureLength { .. }
         | Error::InvalidKeyEpoch
         | Error::ArkKeyEpochNotFound
         | Error::ArkKeyEpochNotIncreasing
@@ -885,6 +891,48 @@ struct EncodedProofContext {
     expires_at_ms: u64,
     challenge: *const u8,
     challenge_length: usize,
+}
+
+struct EncodedSelfRevocationIntentFields {
+    user_id: *const u8,
+    user_id_length: usize,
+    device_id: *const u8,
+    device_id_length: usize,
+    mutation_id: *const u8,
+    mutation_id_length: usize,
+    operation_id: *const u8,
+    operation_id_length: usize,
+    expected_generation: u32,
+    expected_key_epoch: u32,
+    expected_membership_manifest_digest: *const u8,
+    expected_membership_manifest_digest_length: usize,
+    expires_at_ms: u64,
+}
+
+unsafe fn read_self_revocation_intent_fields(
+    encoded: EncodedSelfRevocationIntentFields,
+) -> Result<crypto::SelfRevocationIntentFields, KelivoStatus> {
+    Ok(crypto::SelfRevocationIntentFields {
+        user_id: unsafe { read_user_id(encoded.user_id, encoded.user_id_length) }?,
+        device_id: unsafe { read_device_id(encoded.device_id, encoded.device_id_length) }?,
+        mutation_id: crypto::SelfRevocationMutationId::new(unsafe {
+            read_fixed(encoded.mutation_id, encoded.mutation_id_length)?
+        })
+        .map_err(device_error_status)?,
+        operation_id: crypto::SelfRevocationOperationId::new(unsafe {
+            read_fixed(encoded.operation_id, encoded.operation_id_length)?
+        })
+        .map_err(device_error_status)?,
+        expected_generation: encoded.expected_generation,
+        expected_key_epoch: encoded.expected_key_epoch,
+        expected_membership_manifest_digest: crypto::Sha256Digest::from_bytes(unsafe {
+            read_fixed(
+                encoded.expected_membership_manifest_digest,
+                encoded.expected_membership_manifest_digest_length,
+            )?
+        }),
+        expires_at_ms: encoded.expires_at_ms,
+    })
 }
 
 unsafe fn read_proof_context(
@@ -993,6 +1041,35 @@ unsafe fn prepare_zeroed_fixed_output(
     }
     unsafe { core::ptr::write_bytes(output, 0, expected_length) };
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn prepare_self_revocation_intent_outputs(
+    out_intent_digest: *mut u8,
+    out_intent_digest_capacity: usize,
+    out_intent_digest_length: *mut usize,
+    out_signature: *mut u8,
+    out_signature_capacity: usize,
+    out_signature_length: *mut usize,
+) -> Result<(), KelivoStatus> {
+    let digest_result = unsafe {
+        prepare_zeroed_fixed_output(
+            out_intent_digest,
+            out_intent_digest_capacity,
+            out_intent_digest_length,
+            crypto::SELF_REVOCATION_INTENT_DIGEST_LENGTH,
+        )
+    };
+    let signature_result = unsafe {
+        prepare_zeroed_fixed_output(
+            out_signature,
+            out_signature_capacity,
+            out_signature_length,
+            crypto::SELF_REVOCATION_INTENT_SIGNATURE_LENGTH,
+        )
+    };
+    digest_result?;
+    signature_result
 }
 
 fn create_pending_pairing_at(
@@ -1210,6 +1287,165 @@ pub unsafe extern "C" fn kelivo_data_rekey_completion_proof_verify(
         Err(status) => return status.code(),
     };
     match crypto::verify_data_rekey_completion_proof(&signing_public_key, proof_frame, signature) {
+        Ok(()) => KelivoStatus::Ok.code(),
+        Err(error) => device_error_status(error).code(),
+    }
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+///
+/// 所有输入指针必须覆盖声明长度；两组输出缓冲区与长度指针必须可写且互不重叠。
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn kelivo_self_revocation_intent_create(
+    identity_handle: u64,
+    user_id: *const u8,
+    user_id_length: usize,
+    device_id: *const u8,
+    device_id_length: usize,
+    mutation_id: *const u8,
+    mutation_id_length: usize,
+    operation_id: *const u8,
+    operation_id_length: usize,
+    expected_generation: u32,
+    expected_key_epoch: u32,
+    expected_membership_manifest_digest: *const u8,
+    expected_membership_manifest_digest_length: usize,
+    expires_at_ms: u64,
+    out_intent_digest: *mut u8,
+    out_intent_digest_capacity: usize,
+    out_intent_digest_length: *mut usize,
+    out_signature: *mut u8,
+    out_signature_capacity: usize,
+    out_signature_length: *mut usize,
+) -> i32 {
+    if let Err(status) = unsafe {
+        prepare_self_revocation_intent_outputs(
+            out_intent_digest,
+            out_intent_digest_capacity,
+            out_intent_digest_length,
+            out_signature,
+            out_signature_capacity,
+            out_signature_length,
+        )
+    } {
+        return status.code();
+    }
+    let fields = match unsafe {
+        read_self_revocation_intent_fields(EncodedSelfRevocationIntentFields {
+            user_id,
+            user_id_length,
+            device_id,
+            device_id_length,
+            mutation_id,
+            mutation_id_length,
+            operation_id,
+            operation_id_length,
+            expected_generation,
+            expected_key_epoch,
+            expected_membership_manifest_digest,
+            expected_membership_manifest_digest_length,
+            expires_at_ms,
+        })
+    } {
+        Ok(fields) => fields,
+        Err(status) => return status.code(),
+    };
+    let identity = match identity_for_handle(identity_handle) {
+        Ok(identity) => identity,
+        Err(status) => return status.code(),
+    };
+    let intent = match identity.create_self_revocation_intent(fields) {
+        Ok(intent) => intent,
+        Err(error) => return device_error_status(error).code(),
+    };
+    unsafe {
+        write_bytes(
+            out_intent_digest,
+            out_intent_digest_capacity,
+            intent.digest().as_bytes(),
+            out_intent_digest_length,
+        )
+        .expect("已清零且验证的自撤销意图摘要输出必须可写");
+        write_bytes(
+            out_signature,
+            out_signature_capacity,
+            intent.signature().as_bytes(),
+            out_signature_length,
+        )
+        .expect("已清零且验证的自撤销意图签名输出必须可写");
+    }
+    KelivoStatus::Ok.code()
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+///
+/// 所有输入指针必须覆盖各自声明长度。
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn kelivo_self_revocation_intent_verify(
+    signing_public_key: *const u8,
+    signing_public_key_length: usize,
+    user_id: *const u8,
+    user_id_length: usize,
+    device_id: *const u8,
+    device_id_length: usize,
+    mutation_id: *const u8,
+    mutation_id_length: usize,
+    operation_id: *const u8,
+    operation_id_length: usize,
+    expected_generation: u32,
+    expected_key_epoch: u32,
+    expected_membership_manifest_digest: *const u8,
+    expected_membership_manifest_digest_length: usize,
+    expires_at_ms: u64,
+    intent_digest: *const u8,
+    intent_digest_length: usize,
+    signature: *const u8,
+    signature_length: usize,
+) -> i32 {
+    let signing_public_key =
+        match unsafe { read_fixed(signing_public_key, signing_public_key_length) } {
+            Ok(bytes) => match crypto::DeviceSigningPublicKey::from_bytes(bytes) {
+                Ok(public_key) => public_key,
+                Err(error) => return device_error_status(error).code(),
+            },
+            Err(status) => return status.code(),
+        };
+    let fields = match unsafe {
+        read_self_revocation_intent_fields(EncodedSelfRevocationIntentFields {
+            user_id,
+            user_id_length,
+            device_id,
+            device_id_length,
+            mutation_id,
+            mutation_id_length,
+            operation_id,
+            operation_id_length,
+            expected_generation,
+            expected_key_epoch,
+            expected_membership_manifest_digest,
+            expected_membership_manifest_digest_length,
+            expires_at_ms,
+        })
+    } {
+        Ok(fields) => fields,
+        Err(status) => return status.code(),
+    };
+    let intent_digest = match unsafe { read_input(intent_digest, intent_digest_length) } {
+        Ok(intent_digest) => intent_digest,
+        Err(status) => return status.code(),
+    };
+    let signature = match unsafe { read_input(signature, signature_length) } {
+        Ok(signature) => signature,
+        Err(status) => return status.code(),
+    };
+    match crypto::verify_self_revocation_intent(
+        &signing_public_key,
+        fields,
+        intent_digest,
+        signature,
+    ) {
         Ok(()) => KelivoStatus::Ok.code(),
         Err(error) => device_error_status(error).code(),
     }

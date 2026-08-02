@@ -578,6 +578,98 @@ external int kelivo_data_rekey_completion_proof_verify(
   int signature_length,
 );
 
+@ffi.Native<
+  KelivoStatus Function(
+    ffi.Uint64,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Uint32,
+    ffi.Uint32,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Uint64,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+  )
+>()
+external int kelivo_self_revocation_intent_create(
+  int identity_handle,
+  ffi.Pointer<ffi.Uint8> user_id,
+  int user_id_length,
+  ffi.Pointer<ffi.Uint8> device_id,
+  int device_id_length,
+  ffi.Pointer<ffi.Uint8> mutation_id,
+  int mutation_id_length,
+  ffi.Pointer<ffi.Uint8> operation_id,
+  int operation_id_length,
+  int expected_generation,
+  int expected_key_epoch,
+  ffi.Pointer<ffi.Uint8> expected_membership_manifest_digest,
+  int expected_membership_manifest_digest_length,
+  int expires_at_ms,
+  ffi.Pointer<ffi.Uint8> out_intent_digest,
+  int out_intent_digest_capacity,
+  ffi.Pointer<ffi.Size> out_intent_digest_length,
+  ffi.Pointer<ffi.Uint8> out_signature,
+  int out_signature_capacity,
+  ffi.Pointer<ffi.Size> out_signature_length,
+);
+
+@ffi.Native<
+  KelivoStatus Function(
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Uint32,
+    ffi.Uint32,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Uint64,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+  )
+>()
+external int kelivo_self_revocation_intent_verify(
+  ffi.Pointer<ffi.Uint8> signing_public_key,
+  int signing_public_key_length,
+  ffi.Pointer<ffi.Uint8> user_id,
+  int user_id_length,
+  ffi.Pointer<ffi.Uint8> device_id,
+  int device_id_length,
+  ffi.Pointer<ffi.Uint8> mutation_id,
+  int mutation_id_length,
+  ffi.Pointer<ffi.Uint8> operation_id,
+  int operation_id_length,
+  int expected_generation,
+  int expected_key_epoch,
+  ffi.Pointer<ffi.Uint8> expected_membership_manifest_digest,
+  int expected_membership_manifest_digest_length,
+  int expires_at_ms,
+  ffi.Pointer<ffi.Uint8> intent_digest,
+  int intent_digest_length,
+  ffi.Pointer<ffi.Uint8> signature,
+  int signature_length,
+);
+
 @ffi.Native<KelivoStatus Function(ffi.Uint64)>()
 external int kelivo_device_identity_handle_close(int identity_handle);
 
@@ -1820,7 +1912,7 @@ final class KelivoCoreCapabilities extends ffi.Struct {
   external ffi.Array<ffi.Uint32> reserved;
 }
 
-const int KELIVO_CORE_ABI_VERSION = 21;
+const int KELIVO_CORE_ABI_VERSION = 22;
 
 const int KELIVO_CORE_CAPABILITIES_STRUCT_SIZE = 32;
 
@@ -2049,6 +2141,10 @@ const int KELIVO_DEVICE_PROOF_SIZE = 64;
 const int KELIVO_DATA_REKEY_COMPLETION_PROOF_FRAME_SIZE = 270;
 
 const int KELIVO_DATA_REKEY_COMPLETION_PROOF_SIGNATURE_SIZE = 64;
+
+const int KELIVO_SELF_REVOCATION_INTENT_DIGEST_SIZE = 32;
+
+const int KELIVO_SELF_REVOCATION_INTENT_SIGNATURE_SIZE = 64;
 
 const int KELIVO_ACCOUNT_KEY_ENVELOPE_SIZE = 336;
 

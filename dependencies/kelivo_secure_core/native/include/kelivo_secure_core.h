@@ -22,7 +22,7 @@ extern "C" {
 
 typedef int32_t KelivoStatus;
 
-#define KELIVO_CORE_ABI_VERSION UINT32_C(21)
+#define KELIVO_CORE_ABI_VERSION UINT32_C(22)
 #define KELIVO_CORE_CAPABILITIES_STRUCT_SIZE UINT32_C(32)
 #define KELIVO_KEY_SLOT_ID_SIZE ((size_t)16)
 #define KELIVO_KEY_POLICY_VERSION UINT32_C(1)
@@ -140,6 +140,8 @@ typedef int32_t KelivoStatus;
 #define KELIVO_DEVICE_PROOF_SIZE ((size_t)64)
 #define KELIVO_DATA_REKEY_COMPLETION_PROOF_FRAME_SIZE ((size_t)270)
 #define KELIVO_DATA_REKEY_COMPLETION_PROOF_SIGNATURE_SIZE ((size_t)64)
+#define KELIVO_SELF_REVOCATION_INTENT_DIGEST_SIZE ((size_t)32)
+#define KELIVO_SELF_REVOCATION_INTENT_SIGNATURE_SIZE ((size_t)64)
 #define KELIVO_ACCOUNT_KEY_ENVELOPE_SIZE ((size_t)336)
 #define KELIVO_PAIRING_SECRET_SIZE ((size_t)32)
 #define KELIVO_PAIRING_AUTHENTICATOR_SIZE ((size_t)32)
@@ -733,6 +735,60 @@ KELIVO_CORE_API KelivoStatus kelivo_data_rekey_completion_proof_verify(
     size_t signing_public_key_length,
     const uint8_t *proof_frame,
     size_t proof_frame_length,
+    const uint8_t *signature,
+    size_t signature_length);
+
+/*
+ * 在 Native 内部构造唯一的 self-revocation intent v3 规范帧、计算 SHA-256，
+ * 并仅对该摘要使用设备 Ed25519 身份签名。调用方不能提交待签名摘要或原始帧。
+ * 任一失败都会清零两组可写输出；代次范围分别为
+ * [1, 0x7ffffffe] 与 [1, 0xfffffffe]。device_id 只做规范编码校验，调用方必须
+ * 从本地已认证设备状态绑定它；expires_at_ms 的时效窗口也由调用方与服务端校验。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_self_revocation_intent_create(
+    uint64_t identity_handle,
+    const uint8_t *user_id,
+    size_t user_id_length,
+    const uint8_t *device_id,
+    size_t device_id_length,
+    const uint8_t *mutation_id,
+    size_t mutation_id_length,
+    const uint8_t *operation_id,
+    size_t operation_id_length,
+    uint32_t expected_generation,
+    uint32_t expected_key_epoch,
+    const uint8_t *expected_membership_manifest_digest,
+    size_t expected_membership_manifest_digest_length,
+    uint64_t expires_at_ms,
+    uint8_t *out_intent_digest,
+    size_t out_intent_digest_capacity,
+    size_t *out_intent_digest_length,
+    uint8_t *out_signature,
+    size_t out_signature_capacity,
+    size_t *out_signature_length);
+
+/*
+ * 重新构造 self-revocation intent v3 摘要并同时绑定传入摘要与签名。
+ * signing_public_key 的成员信任关系仍由调用方根据已认证成员清单建立。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_self_revocation_intent_verify(
+    const uint8_t *signing_public_key,
+    size_t signing_public_key_length,
+    const uint8_t *user_id,
+    size_t user_id_length,
+    const uint8_t *device_id,
+    size_t device_id_length,
+    const uint8_t *mutation_id,
+    size_t mutation_id_length,
+    const uint8_t *operation_id,
+    size_t operation_id_length,
+    uint32_t expected_generation,
+    uint32_t expected_key_epoch,
+    const uint8_t *expected_membership_manifest_digest,
+    size_t expected_membership_manifest_digest_length,
+    uint64_t expires_at_ms,
+    const uint8_t *intent_digest,
+    size_t intent_digest_length,
     const uint8_t *signature,
     size_t signature_length);
 
