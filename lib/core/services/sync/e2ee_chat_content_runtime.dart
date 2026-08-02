@@ -1162,13 +1162,14 @@ final class E2eeChatContentRuntime
     final now = _utcNow().toUtc();
     for (final change in changes) {
       final entityKey = change.state.entityKey;
-      if (entityKey.entityType != ConfigSyncKeys.assistantType) continue;
+      final fields = e2eeConfigAssetPayloadFieldsFor(entityKey);
+      if (fields.isEmpty) continue;
       final keys = <E2eeConfigAssetSlot, E2eeConfigAssetKey>{
-        for (final slot in const <E2eeConfigAssetSlot>[
-          E2eeConfigAssetSlot.avatar,
-          E2eeConfigAssetSlot.background,
-        ])
-          slot: E2eeConfigAssetKey(entityKey: entityKey, slot: slot),
+        for (final field in fields)
+          field.slot: E2eeConfigAssetKey(
+            entityKey: entityKey,
+            slot: field.slot,
+          ),
       };
       switch (change) {
         case E2eeSyncPulledTombstoneChange():
@@ -1183,16 +1184,13 @@ final class E2eeChatContentRuntime
             for (final registration in registrations)
               registration.key.slot: registration.asset,
           };
-          for (final entry in const <(String, E2eeConfigAssetSlot)>[
-            ('avatarAsset', E2eeConfigAssetSlot.avatar),
-            ('backgroundAsset', E2eeConfigAssetSlot.background),
-          ]) {
-            final key = keys[entry.$2]!;
-            if (payload[entry.$1] == null) {
+          for (final field in fields) {
+            final key = keys[field.slot]!;
+            if (payload[field.identityField] == null) {
               mayHaveOrphanedAssets |= await commands.remove(key);
               continue;
             }
-            final asset = bySlot[entry.$2];
+            final asset = bySlot[field.slot];
             if (asset == null) {
               throw StateError('E2EE 配置资产下载登记缺失');
             }

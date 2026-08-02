@@ -191,6 +191,7 @@ _configPayloadCases() {
         'proxyPassword': 'proxy-secret',
         'avatarType': null,
         'avatarValue': null,
+        'avatarAsset': null,
         'multiKeyEnabled': true,
         'apiKeys': <Object?>[
           <String, Object?>{
@@ -407,6 +408,7 @@ _configPayloadCases() {
         'name': 'Ovo',
         'avatarType': 'emoji',
         'avatarValue': 'O',
+        'avatarAsset': null,
       },
     ),
     (
@@ -6754,7 +6756,7 @@ void main() {
       );
     });
 
-    test('助手受管资产仅接受完整远端身份且不携带本机路径', () {
+    test('配置受管资产仅接受完整远端身份且不携带本机路径', () {
       final assistantCase = _configPayloadCases().firstWhere(
         (testCase) => testCase.key.entityType == ConfigSyncKeys.assistantType,
       );
@@ -6816,6 +6818,50 @@ void main() {
         ),
         throwsFormatException,
       );
+
+      for (final testCase in _configPayloadCases().where(
+        (entry) =>
+            entry.key.entityType == ConfigSyncKeys.providerType ||
+            entry.key == ConfigSyncKeys.profile,
+      )) {
+        final managedAvatarPayload = <String, Object?>{
+          ...testCase.payload,
+          'avatarType': null,
+          'avatarValue': null,
+          'avatarAsset': <String, Object?>{
+            'attachmentId': '55000000-0000-4000-8000-000000000001',
+            'uploadId': '56000000-0000-4000-8000-000000000001',
+            'chunkKeyEpoch': 7,
+            'manifestKeyEpoch': 7,
+            'manifestRevision': 1,
+            'kind': 'image',
+          },
+        };
+        final managedEncoded = E2eeSyncPayloadCodec.encode(
+          entityKey: testCase.key,
+          payload: managedAvatarPayload,
+        );
+        expect(
+          E2eeSyncPayloadCodec.decode(
+            entityKey: testCase.key,
+            bytes: managedEncoded,
+          ),
+          managedAvatarPayload,
+        );
+        expect(utf8.decode(managedEncoded), isNot(contains(r'C:\private')));
+        expect(
+          () => E2eeSyncPayloadCodec.encode(
+            entityKey: testCase.key,
+            payload: <String, Object?>{
+              ...managedAvatarPayload,
+              'avatarType': 'file',
+              'avatarValue': r'C:\private\avatar.png',
+            },
+          ),
+          throwsFormatException,
+          reason: testCase.key.toString(),
+        );
+      }
     });
 
     test('拒绝额外字段、身份错配、未知变体、非法数值与非规范编码', () {
@@ -9546,45 +9592,62 @@ void main() {
         fileStore: E2eeAttachmentMemoryFileStore(),
         utcNow: () => DateTime.utc(2026, 7, 29, 8, 5),
       );
-      final assistantCase = _configPayloadCases().firstWhere(
-        (entry) => entry.key.entityType == ConfigSyncKeys.assistantType,
-      );
-      final payload = Map<String, Object?>.from(assistantCase.payload)
-        ..['avatar'] = null
-        ..['avatarAsset'] = <String, Object?>{
-          'attachmentId': attachmentId,
-          'uploadId': uploadId,
-          'chunkKeyEpoch': 7,
-          'manifestKeyEpoch': 7,
-          'manifestRevision': 1,
-          'kind': 'image',
-        };
-      final change = await authenticatePulledValueChange(
-        await createPullValueChange(
-          changeSeq: 203,
-          revision: 1,
-          operation: 203,
-          entityKey: assistantCase.key,
-          payload: payload,
-        ),
-      );
+      final assetIdentity = <String, Object?>{
+        'attachmentId': attachmentId,
+        'uploadId': uploadId,
+        'chunkKeyEpoch': 7,
+        'manifestKeyEpoch': 7,
+        'manifestRevision': 1,
+        'kind': 'image',
+      };
+      final avatarCases = _configPayloadCases()
+          .where(
+            (entry) =>
+                entry.key.entityType == ConfigSyncKeys.assistantType ||
+                entry.key.entityType == ConfigSyncKeys.providerType ||
+                entry.key == ConfigSyncKeys.profile,
+          )
+          .toList(growable: false);
+      final changes = <E2eeSyncPulledValueChange>[];
+      for (var index = 0; index < avatarCases.length; index++) {
+        final testCase = avatarCases[index];
+        final payload = Map<String, Object?>.from(testCase.payload)
+          ..['avatarAsset'] = assetIdentity;
+        if (testCase.key.entityType == ConfigSyncKeys.assistantType) {
+          payload['avatar'] = null;
+        } else {
+          payload['avatarType'] = null;
+          payload['avatarValue'] = null;
+        }
+        changes.add(
+          await authenticatePulledValueChange(
+            await createPullValueChange(
+              changeSeq: 203 + index,
+              revision: 1,
+              operation: 203 + index,
+              entityKey: testCase.key,
+              payload: payload,
+            ),
+          ),
+        );
+      }
 
       expect(
-        await coordinator.preparePage(<E2eeSyncPulledChange>[
-          change,
-        ], maximumRemoteSteps: 2),
+        await coordinator.preparePage(changes, maximumRemoteSteps: 2),
         E2eeSyncPullPagePreparationDisposition.ready,
       );
-      final registration = (await coordinator.requireReadyForConfigApply(
-        change,
-      )).single;
-      expect(registration.key.entityKey, assistantCase.key);
-      expect(registration.key.slot, E2eeConfigAssetSlot.avatar);
-      expect(registration.asset.kind, E2eeAttachmentKind.image.name);
-      expect(registration.asset.displayName, equals(null));
-      expect(registration.asset.mediaType, equals(null));
-      expect(registration.asset.attachmentId, attachmentId);
-      expect(registration.asset.uploadId, uploadId);
+      for (var index = 0; index < changes.length; index++) {
+        final registration = (await coordinator.requireReadyForConfigApply(
+          changes[index],
+        )).single;
+        expect(registration.key.entityKey, avatarCases[index].key);
+        expect(registration.key.slot, E2eeConfigAssetSlot.avatar);
+        expect(registration.asset.kind, E2eeAttachmentKind.image.name);
+        expect(registration.asset.displayName, equals(null));
+        expect(registration.asset.mediaType, equals(null));
+        expect(registration.asset.attachmentId, attachmentId);
+        expect(registration.asset.uploadId, uploadId);
+      }
       await coordinator.close();
     });
 

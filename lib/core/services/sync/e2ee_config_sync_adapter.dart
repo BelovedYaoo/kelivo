@@ -3,7 +3,6 @@ import 'dart:typed_data';
 import '../../database/chat_database_repository.dart';
 import 'config_sync_keys.dart';
 import 'e2ee_account_record_state.dart';
-import 'e2ee_attachment_manifest.dart';
 import 'e2ee_config_asset_types.dart';
 import 'e2ee_sync_outbox.dart';
 import 'e2ee_sync_payload_codec.dart';
@@ -33,8 +32,8 @@ final class E2eeConfigSyncAdapter {
     final payload = Map<String, Object?>.from(
       E2eeSyncPayloadCodec.decode(entityKey: entityKey, bytes: entry.payload),
     );
-    if (entityKey.entityType == ConfigSyncKeys.assistantType) {
-      await _overlayAssistantAssets(entityKey, payload);
+    if (e2eeConfigAssetPayloadFieldsFor(entityKey).isNotEmpty) {
+      await _overlayConfigAssets(entityKey, payload);
       final encoded = E2eeSyncPayloadCodec.encode(
         entityKey: entityKey,
         payload: payload,
@@ -48,25 +47,24 @@ final class E2eeConfigSyncAdapter {
     return E2eeSyncValueSnapshot.copyFrom(entry.payload);
   }
 
-  Future<void> _overlayAssistantAssets(
+  Future<void> _overlayConfigAssets(
     SyncEntityKey entityKey,
     Map<String, Object?> payload,
   ) async {
-    for (final entry in const <(String, String, E2eeConfigAssetSlot)>[
-      ('avatar', 'avatarAsset', E2eeConfigAssetSlot.avatar),
-      ('background', 'backgroundAsset', E2eeConfigAssetSlot.background),
-    ]) {
+    for (final field in e2eeConfigAssetPayloadFieldsFor(entityKey)) {
       final record = await _assetCommands.read(
-        E2eeConfigAssetKey(entityKey: entityKey, slot: entry.$3),
+        E2eeConfigAssetKey(entityKey: entityKey, slot: field.slot),
       );
-      final payloadIdentity = payload[entry.$2];
+      final payloadIdentity = payload[field.identityField];
       if (record == null) {
         if (payloadIdentity != null) {
           throw StateError('E2EE 配置资产 payload 缺少本地受管引用');
         }
         continue;
       }
-      if (payload[entry.$1] != null) {
+      if (payload[field.portableValueField] != null ||
+          (field.portableTypeField != null &&
+              payload[field.portableTypeField] != null)) {
         throw StateError('E2EE 配置资产不得与可移植值同时存在');
       }
       final identity = record.remoteIdentity;
@@ -78,13 +76,13 @@ final class E2eeConfigSyncAdapter {
       if (payloadIdentity != null) {
         final expected = E2eeConfigAssetRemoteIdentity.fromPayload(
           payloadIdentity,
-          expectedKind: E2eeAttachmentKind.image,
+          expectedKind: field.kind,
         );
         if (!_sameConfigAssetIdentity(identity, expected)) {
           throw StateError('E2EE 配置资产 payload 与本地受管引用不一致');
         }
       }
-      payload[entry.$2] = identity.toPayload();
+      payload[field.identityField] = identity.toPayload();
     }
   }
 

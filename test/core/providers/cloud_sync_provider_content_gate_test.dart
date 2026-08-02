@@ -36,6 +36,7 @@ import 'package:Kelivo/core/services/sync/e2ee_background_sync_runner.dart';
 import 'package:Kelivo/core/services/sync/e2ee_chat_content_runtime.dart';
 import 'package:Kelivo/core/services/sync/e2ee_config_asset_types.dart';
 import 'package:Kelivo/core/services/sync/e2ee_config_provider_binding.dart';
+import 'package:Kelivo/core/services/sync/e2ee_config_sync_adapter.dart';
 import 'package:Kelivo/core/services/sync/e2ee_device_state_access.dart';
 import 'package:Kelivo/core/services/sync/e2ee_first_device_registration_commit_coordinator.dart';
 import 'package:Kelivo/core/services/sync/e2ee_mobile_background_sync.dart';
@@ -5183,6 +5184,67 @@ void main() {
     );
   });
 
+  test('E2EE 配置桥接从受管资产引用水合用户与供应商头像', () async {
+    final harness = await _E2eeConfigBindingHarness.create(
+      initialProfileName: '头像用户',
+      profileAvatarAsset: const MessageAssetRegistration(
+        assetId:
+            'asset_cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+        contentHash:
+            'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+        path: r'D:\managed\user-avatar.png',
+        byteSize: 9,
+        kind: 'image',
+        attachmentId: '11000000-0000-4000-8000-000000000001',
+        uploadId: '11000000-0000-4000-8000-000000000002',
+        chunkKeyEpoch: 1,
+        manifestKeyEpoch: 1,
+        manifestRevision: 1,
+      ),
+      initialProvider: ProviderConfig(
+        id: 'provider-managed-avatar',
+        enabled: true,
+        name: '受管头像供应商',
+        apiKey: '',
+        baseUrl: 'https://example.com/v1',
+      ),
+      providerAvatarAsset: const MessageAssetRegistration(
+        assetId:
+            'asset_dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+        contentHash:
+            'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+        path: r'D:\managed\provider-avatar.png',
+        byteSize: 10,
+        kind: 'image',
+        attachmentId: '12000000-0000-4000-8000-000000000001',
+        uploadId: '12000000-0000-4000-8000-000000000002',
+        chunkKeyEpoch: 1,
+        manifestKeyEpoch: 1,
+        manifestRevision: 1,
+      ),
+    );
+    addTearDown(harness.close);
+
+    expect(harness.providers.user.avatarType, 'file');
+    expect(harness.providers.user.avatarValue, r'D:\managed\user-avatar.png');
+    expect(
+      harness
+          .providers
+          .settings
+          .providerConfigs['provider-managed-avatar']
+          ?.avatarType,
+      'file',
+    );
+    expect(
+      harness
+          .providers
+          .settings
+          .providerConfigs['provider-managed-avatar']
+          ?.avatarValue,
+      r'D:\managed\provider-avatar.png',
+    );
+  });
+
   test('E2EE 生产运行时配置写入与 outbox 原子提交并触发发送', () async {
     final harness = await _E2eeRuntimeHarness.create();
     addTearDown(harness.close);
@@ -5328,6 +5390,141 @@ void main() {
       );
     } finally {
       await clearLease.release();
+    }
+    await instance.runtime.close();
+  });
+
+  test('E2EE 用户与供应商头像先加密上传再发送配置密文', () async {
+    final harness = await _E2eeRuntimeHarness.create();
+    addTearDown(harness.close);
+    final instance = harness.createInstance(withConfigProviders: true);
+    await instance.runtime.initialize().timeout(const Duration(seconds: 15));
+    await _waitUntil(() => instance.pull.pullCalls >= 2);
+    final providers = instance.configProviders!;
+    const providerId = 'runtime-provider-avatar';
+    await providers.settings.setProviderConfig(
+      providerId,
+      ProviderConfig(
+        id: providerId,
+        enabled: true,
+        name: '头像供应商',
+        apiKey: '',
+        baseUrl: 'https://example.com/v1',
+      ),
+    );
+    await _waitUntil(() => instance.records.pushCalls >= 1);
+
+    final missingUploads = instance.attachments.createCalls;
+    await expectLater(
+      providers.user.setAvatarFilePath(
+        p.join(harness.root.path, 'missing-user-avatar.png'),
+      ),
+      throwsStateError,
+    );
+    expect(instance.attachments.createCalls, missingUploads);
+    expect(providers.user.avatarType, equals(null));
+
+    final userSource = File(p.join(harness.root.path, 'user-avatar.png'));
+    await userSource.writeAsBytes(<int>[1, 2, 3, 4, 5], flush: true);
+    final userEventStart = instance.transportEvents.length;
+    final userCommitsBefore = instance.attachments.commitCalls;
+    final userPushesBefore = instance.records.pushCalls;
+    await providers.user.setAvatarFilePath(userSource.path);
+    await _waitUntil(
+      () =>
+          instance.attachments.commitCalls > userCommitsBefore &&
+          instance.records.pushCalls > userPushesBefore,
+    );
+    expect(instance.transportEvents.skip(userEventStart).take(4), <String>[
+      'attachment-create',
+      'attachment-chunk',
+      'attachment-commit',
+      'push',
+    ]);
+
+    final providerSource = File(
+      p.join(harness.root.path, 'provider-avatar.png'),
+    );
+    await providerSource.writeAsBytes(<int>[6, 7, 8, 9], flush: true);
+    final providerEventStart = instance.transportEvents.length;
+    final providerCommitsBefore = instance.attachments.commitCalls;
+    final providerPushesBefore = instance.records.pushCalls;
+    await providers.settings.setProviderAvatarFilePath(
+      providerId,
+      providerSource.path,
+    );
+    await _waitUntil(
+      () =>
+          instance.attachments.commitCalls > providerCommitsBefore &&
+          instance.records.pushCalls > providerPushesBefore,
+    );
+    expect(instance.transportEvents.skip(providerEventStart).take(4), <String>[
+      'attachment-create',
+      'attachment-chunk',
+      'attachment-commit',
+      'push',
+    ]);
+
+    final lease = await harness._databaseGateway.acquire(harness._databaseFile);
+    try {
+      final adapter = E2eeConfigSyncAdapter(
+        commands: lease.repository.e2eeConfigVaultCommands,
+        assetCommands: lease.repository.e2eeConfigAssetCommands,
+      );
+      for (final key in <SyncEntityKey>[
+        ConfigSyncKeys.profile,
+        ConfigSyncKeys.provider(providerId),
+      ]) {
+        final asset = await lease.repository.e2eeConfigAssetCommands.read(
+          E2eeConfigAssetKey(entityKey: key, slot: E2eeConfigAssetSlot.avatar),
+        );
+        expect(asset?.remoteIdentity, isNotNull, reason: key.toString());
+        final snapshot = await adapter.readSnapshot(key);
+        final payload = E2eeSyncPayloadCodec.decode(
+          entityKey: key,
+          bytes: (snapshot as E2eeSyncValueSnapshot).payload,
+        );
+        expect(payload['avatarType'], equals(null), reason: key.toString());
+        expect(payload['avatarValue'], equals(null), reason: key.toString());
+        expect(payload['avatarAsset'], isNotNull, reason: key.toString());
+        expect(payload.toString(), isNot(contains(harness.root.path)));
+      }
+    } finally {
+      await lease.release();
+    }
+
+    final clearPushesBefore = instance.records.pushCalls;
+    await providers.user.resetAvatar();
+    await _waitUntil(() => instance.records.pushCalls > clearPushesBefore);
+    expect(providers.user.avatarType, equals(null));
+
+    final deletePushesBefore = instance.records.pushCalls;
+    await providers.settings.removeProviderConfig(providerId);
+    await _waitUntil(() => instance.records.pushCalls > deletePushesBefore);
+    final cleanupLease = await harness._databaseGateway.acquire(
+      harness._databaseFile,
+    );
+    try {
+      expect(
+        await cleanupLease.repository.e2eeConfigAssetCommands.read(
+          E2eeConfigAssetKey(
+            entityKey: ConfigSyncKeys.profile,
+            slot: E2eeConfigAssetSlot.avatar,
+          ),
+        ),
+        equals(null),
+      );
+      expect(
+        await cleanupLease.repository.e2eeConfigAssetCommands.read(
+          E2eeConfigAssetKey(
+            entityKey: ConfigSyncKeys.provider(providerId),
+            slot: E2eeConfigAssetSlot.avatar,
+          ),
+        ),
+        equals(null),
+      );
+    } finally {
+      await cleanupLease.release();
     }
     await instance.runtime.close();
   });
@@ -5750,6 +5947,9 @@ final class _E2eeConfigBindingHarness {
     required String initialProfileName,
     Assistant? initialAssistant,
     MessageAssetRegistration? assistantAvatarAsset,
+    ProviderConfig? initialProvider,
+    MessageAssetRegistration? providerAvatarAsset,
+    MessageAssetRegistration? profileAvatarAsset,
   }) async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     final directory = await Directory.systemTemp.createTemp(
@@ -5771,9 +5971,13 @@ final class _E2eeConfigBindingHarness {
         const _VaultPassThroughWriteExecutor(),
       );
       final binding = providers.createBinding();
+      final profileIdentity = _testConfigAssetIdentity(profileAvatarAsset);
       final encoded = E2eeSyncPayloadCodec.encode(
         entityKey: ConfigSyncKeys.profile,
-        payload: _profilePayload(initialProfileName),
+        payload: <String, Object?>{
+          ..._profilePayload(initialProfileName),
+          'avatarAsset': profileIdentity?.toPayload(),
+        },
       );
       try {
         await repository.e2eeConfigVaultCommands.put(
@@ -5781,22 +5985,56 @@ final class _E2eeConfigBindingHarness {
           payload: encoded,
           updatedAt: DateTime.utc(2026, 7, 29),
         );
+        if (profileAvatarAsset != null) {
+          await repository.e2eeConfigAssetCommands.replace(
+            key: E2eeConfigAssetKey(
+              entityKey: ConfigSyncKeys.profile,
+              slot: E2eeConfigAssetSlot.avatar,
+            ),
+            asset: profileAvatarAsset,
+            now: DateTime.utc(2026, 7, 29),
+          );
+        }
       } finally {
         encoded.fillRange(0, encoded.length, 0);
+      }
+      if (initialProvider != null) {
+        final key = ConfigSyncKeys.provider(initialProvider.id);
+        final providerIdentity = _testConfigAssetIdentity(providerAvatarAsset);
+        final providerPayload =
+            Map<String, Object?>.from(initialProvider.toJson())
+              ..['_position'] = 0
+              ..['avatarType'] = null
+              ..['avatarValue'] = null
+              ..['avatarAsset'] = providerIdentity?.toPayload();
+        final encodedProvider = E2eeSyncPayloadCodec.encode(
+          entityKey: key,
+          payload: providerPayload,
+        );
+        try {
+          await repository.e2eeConfigVaultCommands.put(
+            key: key,
+            payload: encodedProvider,
+            updatedAt: DateTime.utc(2026, 7, 29),
+          );
+          if (providerAvatarAsset != null) {
+            await repository.e2eeConfigAssetCommands.replace(
+              key: E2eeConfigAssetKey(
+                entityKey: key,
+                slot: E2eeConfigAssetSlot.avatar,
+              ),
+              asset: providerAvatarAsset,
+              now: DateTime.utc(2026, 7, 29),
+            );
+          }
+        } finally {
+          encodedProvider.fillRange(0, encodedProvider.length, 0);
+        }
       }
       if (initialAssistant != null) {
         final key = ConfigSyncKeys.assistant(initialAssistant.id);
         final avatarAsset = assistantAvatarAsset;
-        final remoteIdentity = avatarAsset?.attachmentId == null
-            ? null
-            : E2eeConfigAssetRemoteIdentity(
-                attachmentId: avatarAsset!.attachmentId!,
-                uploadId: avatarAsset.uploadId!,
-                chunkKeyEpoch: avatarAsset.chunkKeyEpoch!,
-                manifestKeyEpoch: avatarAsset.manifestKeyEpoch!,
-                manifestRevision: avatarAsset.manifestRevision!,
-                kind: E2eeAttachmentKind.image,
-              );
+        final remoteIdentity = _testConfigAssetIdentity(avatarAsset);
         final assistantPayload =
             Map<String, Object?>.from(initialAssistant.toJson())
               ..['_position'] = 0
@@ -5914,7 +6152,22 @@ Map<String, Object?> _profilePayload(String name) => <String, Object?>{
   'name': name,
   'avatarType': null,
   'avatarValue': null,
+  'avatarAsset': null,
 };
+
+E2eeConfigAssetRemoteIdentity? _testConfigAssetIdentity(
+  MessageAssetRegistration? asset,
+) {
+  if (asset?.attachmentId == null) return null;
+  return E2eeConfigAssetRemoteIdentity(
+    attachmentId: asset!.attachmentId!,
+    uploadId: asset.uploadId!,
+    chunkKeyEpoch: asset.chunkKeyEpoch!,
+    manifestKeyEpoch: asset.manifestKeyEpoch!,
+    manifestRevision: asset.manifestRevision!,
+    kind: E2eeAttachmentKind.image,
+  );
+}
 
 final class _TestConfigProviders {
   const _TestConfigProviders._({

@@ -273,7 +273,7 @@ final class E2eeConfigProviderBinding implements E2eeConfigSyncBinding {
   Future<Map<String, Object?>?> _exportPayload(SyncEntityKey key) async {
     ConfigSyncKeys.validate(key);
     return switch (key.entityType) {
-      ConfigSyncKeys.providerType => _exportProvider(key.entityId),
+      ConfigSyncKeys.providerType => await _exportProvider(key.entityId),
       ConfigSyncKeys.assistantType => await _exportAssistant(key.entityId),
       ConfigSyncKeys.memoryType => _exportMemory(key.entityId),
       ConfigSyncKeys.worldBookType => _exportWorldBook(key.entityId),
@@ -282,20 +282,30 @@ final class E2eeConfigProviderBinding implements E2eeConfigSyncBinding {
       ConfigSyncKeys.networkTtsType => _exportTtsService(key.entityId),
       ConfigSyncKeys.mcpServerType => _exportMcpServer(key.entityId),
       ConfigSyncKeys.instructionInjectionType => _exportInjection(key.entityId),
-      ConfigSyncKeys.preferenceType => _exportPreference(key),
+      ConfigSyncKeys.preferenceType => await _exportPreference(key),
       _ => throw StateError('sync_config_entity_type_unreachable'),
     };
   }
 
-  Map<String, Object?>? _exportProvider(String id) {
+  Future<Map<String, Object?>?> _exportProvider(String id) async {
     final config = _settings.providerConfigs[id];
     if (config == null) return null;
+    final avatarAsset = await _exportConfigAsset(
+      E2eeConfigAssetKey(
+        entityKey: ConfigSyncKeys.provider(id),
+        slot: E2eeConfigAssetSlot.avatar,
+      ),
+      config.avatarValue,
+      managed: config.avatarType == 'file',
+      context: '供应商头像',
+    );
     final payload = _jsonObject(config.toJson());
     final orderIndex = _settings.providersOrder.indexOf(id);
     payload['_position'] = orderIndex < 0
         ? _settings.providerConfigs.keys.toList().indexOf(id)
         : orderIndex;
-    if (config.avatarType == 'file') {
+    payload['avatarAsset'] = avatarAsset.identity?.toPayload();
+    if (avatarAsset.managed) {
       payload['avatarType'] = null;
       payload['avatarValue'] = null;
     }
@@ -306,19 +316,23 @@ final class E2eeConfigProviderBinding implements E2eeConfigSyncBinding {
     final assistant = _assistants.getById(id);
     if (assistant == null) return null;
     final entityKey = ConfigSyncKeys.assistant(id);
-    final avatarAsset = await _exportAssistantAsset(
+    final avatarAsset = await _exportConfigAsset(
       E2eeConfigAssetKey(
         entityKey: entityKey,
         slot: E2eeConfigAssetSlot.avatar,
       ),
       assistant.avatar,
+      managed: _isLocalPath(assistant.avatar),
+      context: '助手头像',
     );
-    final backgroundAsset = await _exportAssistantAsset(
+    final backgroundAsset = await _exportConfigAsset(
       E2eeConfigAssetKey(
         entityKey: entityKey,
         slot: E2eeConfigAssetSlot.background,
       ),
       assistant.background,
+      managed: _isLocalPath(assistant.background),
+      context: '助手背景',
     );
     final payload = _jsonObject(assistant.toJson());
     payload['_position'] = _assistants.assistants.indexWhere(
@@ -331,17 +345,22 @@ final class E2eeConfigProviderBinding implements E2eeConfigSyncBinding {
     return payload;
   }
 
-  Future<_AssistantAssetExport> _exportAssistantAsset(
+  Future<_ConfigAssetExport> _exportConfigAsset(
     E2eeConfigAssetKey key,
-    String? value,
-  ) async {
-    if (!_isLocalPath(value)) return const _AssistantAssetExport.unmanaged();
+    String? value, {
+    required bool managed,
+    required String context,
+  }) async {
+    if (!managed) return const _ConfigAssetExport.unmanaged();
+    if (!_isLocalPath(value)) {
+      throw StateError('E2EE $context 缺少有效本机路径');
+    }
     final record = await _assetCommands!.read(key);
     if (record == null ||
         !p.equals(p.normalize(value!.trim()), p.normalize(record.asset.path))) {
-      throw StateError('E2EE 助手本地资产缺少匹配的受管引用');
+      throw StateError('E2EE $context 缺少匹配的受管引用');
     }
-    return _AssistantAssetExport.managed(record.remoteIdentity);
+    return _ConfigAssetExport.managed(record.remoteIdentity);
   }
 
   Map<String, Object?>? _exportMemory(String id) {
@@ -397,13 +416,9 @@ final class E2eeConfigProviderBinding implements E2eeConfigSyncBinding {
       ..['_position'] = index;
   }
 
-  Map<String, Object?> _exportPreference(SyncEntityKey key) {
+  Future<Map<String, Object?>> _exportPreference(SyncEntityKey key) async {
     return switch (key) {
-      ConfigSyncKeys.profile => <String, Object?>{
-        'name': _user.name,
-        'avatarType': _user.avatarType == 'file' ? null : _user.avatarType,
-        'avatarValue': _user.avatarType == 'file' ? null : _user.avatarValue,
-      },
+      ConfigSyncKeys.profile => await _exportProfile(),
       ConfigSyncKeys.providerGrouping => <String, Object?>{
         'order': List<String>.of(_settings.providersOrder),
         'groups': <Object?>[
@@ -443,6 +458,24 @@ final class E2eeConfigProviderBinding implements E2eeConfigSyncBinding {
         'requestTimeoutSeconds': _mcp.requestTimeoutSeconds,
       },
       _ => throw StateError('sync_config_preference_id_unreachable'),
+    };
+  }
+
+  Future<Map<String, Object?>> _exportProfile() async {
+    final avatarAsset = await _exportConfigAsset(
+      E2eeConfigAssetKey(
+        entityKey: ConfigSyncKeys.profile,
+        slot: E2eeConfigAssetSlot.avatar,
+      ),
+      _user.avatarValue,
+      managed: _user.avatarType == 'file',
+      context: '用户头像',
+    );
+    return <String, Object?>{
+      'name': _user.name,
+      'avatarType': avatarAsset.managed ? null : _user.avatarType,
+      'avatarValue': avatarAsset.managed ? null : _user.avatarValue,
+      'avatarAsset': avatarAsset.identity?.toPayload(),
     };
   }
 
@@ -505,13 +538,20 @@ final class E2eeConfigProviderBinding implements E2eeConfigSyncBinding {
   }
 
   Future<void> _applyProvider(String id, Map<String, Object?> payload) async {
-    var config = ProviderConfig.fromJson(_dynamicObject(payload));
-    final current = _settings.providerConfigs[id];
-    if (config.avatarType == null && current?.avatarType == 'file') {
-      config = config.copyWith(
-        avatarType: current!.avatarType,
-        avatarValue: current.avatarValue,
-      );
+    final decodedPayload = Map<String, Object?>.from(payload)
+      ..remove('avatarAsset');
+    var config = ProviderConfig.fromJson(_dynamicObject(decodedPayload));
+    final avatar = await _resolveConfigAsset(
+      E2eeConfigAssetKey(
+        entityKey: ConfigSyncKeys.provider(id),
+        slot: E2eeConfigAssetSlot.avatar,
+      ),
+      payload['avatarAsset'],
+      config.avatarValue,
+      context: '供应商头像',
+    );
+    if (avatar.managed) {
+      config = config.copyWith(avatarType: 'file', avatarValue: avatar.value);
     }
     await _settings.syncUpsertProviderConfig(
       id,
@@ -526,27 +566,29 @@ final class E2eeConfigProviderBinding implements E2eeConfigSyncBinding {
       ..remove('avatarAsset')
       ..remove('backgroundAsset');
     final decoded = Assistant.fromJson(_dynamicObject(decodedPayload));
-    final avatar = await _resolveAssistantAsset(
+    final avatar = await _resolveConfigAsset(
       E2eeConfigAssetKey(
         entityKey: entityKey,
         slot: E2eeConfigAssetSlot.avatar,
       ),
       payload['avatarAsset'],
       decoded.avatar,
+      context: '助手头像',
     );
-    final background = await _resolveAssistantAsset(
+    final background = await _resolveConfigAsset(
       E2eeConfigAssetKey(
         entityKey: entityKey,
         slot: E2eeConfigAssetSlot.background,
       ),
       payload['backgroundAsset'],
       decoded.background,
+      context: '助手背景',
     );
     final assistant = decoded.copyWith(
-      avatar: avatar,
-      background: background,
-      clearAvatar: avatar == null,
-      clearBackground: background == null,
+      avatar: avatar.value,
+      background: background.value,
+      clearAvatar: avatar.value == null,
+      clearBackground: background.value == null,
     );
     await _assistants.syncUpsertAssistant(
       assistant,
@@ -554,18 +596,21 @@ final class E2eeConfigProviderBinding implements E2eeConfigSyncBinding {
     );
   }
 
-  Future<String?> _resolveAssistantAsset(
+  Future<_ConfigAssetResolution> _resolveConfigAsset(
     E2eeConfigAssetKey key,
     Object? payloadIdentity,
-    String? portableValue,
-  ) async {
+    String? portableValue, {
+    required String context,
+  }) async {
     final record = await _assetCommands!.read(key);
     if (payloadIdentity == null) {
-      if (record == null) return portableValue;
-      if (portableValue != null) {
-        throw StateError('E2EE 助手配置资产与可移植值冲突');
+      if (record == null) {
+        return _ConfigAssetResolution.unmanaged(portableValue);
       }
-      return record.asset.path;
+      if (portableValue != null) {
+        throw StateError('E2EE $context 与可移植值冲突');
+      }
+      return _ConfigAssetResolution.managed(record.asset.path);
     }
     final expected = E2eeConfigAssetRemoteIdentity.fromPayload(
       payloadIdentity,
@@ -575,9 +620,12 @@ final class E2eeConfigProviderBinding implements E2eeConfigSyncBinding {
     if (record == null ||
         actual == null ||
         !_sameAssetIdentity(actual, expected)) {
-      throw StateError('E2EE 助手配置资产与本地受管引用不一致');
+      throw StateError('E2EE $context 与本地受管引用不一致');
     }
-    return record.asset.path;
+    if (portableValue != null) {
+      throw StateError('E2EE $context 与可移植值冲突');
+    }
+    return _ConfigAssetResolution.managed(record.asset.path);
   }
 
   Future<void> _applyPreference(
@@ -588,12 +636,20 @@ final class E2eeConfigProviderBinding implements E2eeConfigSyncBinding {
       case ConfigSyncKeys.profile:
         final avatarType = payload['avatarType'] as String?;
         final avatarValue = payload['avatarValue'] as String?;
-        final localFile = _user.avatarType == 'file';
+        final avatar = await _resolveConfigAsset(
+          E2eeConfigAssetKey(
+            entityKey: ConfigSyncKeys.profile,
+            slot: E2eeConfigAssetSlot.avatar,
+          ),
+          payload['avatarAsset'],
+          avatarValue,
+          context: '用户头像',
+        );
         await _user.syncApplyProfile(
           name: payload['name']! as String,
-          replaceAvatar: avatarType != null || !localFile,
-          avatarType: avatarType,
-          avatarValue: avatarValue,
+          replaceAvatar: true,
+          avatarType: avatar.managed ? 'file' : avatarType,
+          avatarValue: avatar.value,
         );
       case ConfigSyncKeys.providerGrouping:
         await _settings.syncApplyProviderGrouping(
@@ -677,10 +733,7 @@ final class E2eeConfigProviderBinding implements E2eeConfigSyncBinding {
   Future<void> _applyPreferenceDelete(SyncEntityKey key) async {
     switch (key) {
       case ConfigSyncKeys.profile:
-        await _user.syncApplyProfile(
-          name: 'User',
-          replaceAvatar: _user.avatarType != 'file',
-        );
+        await _user.syncApplyProfile(name: 'User', replaceAvatar: true);
       case ConfigSyncKeys.providerGrouping:
         await _settings.syncApplyProviderGrouping(
           order: const <String>[],
@@ -725,13 +778,22 @@ final class E2eeConfigProviderBinding implements E2eeConfigSyncBinding {
   }
 }
 
-final class _AssistantAssetExport {
-  const _AssistantAssetExport.unmanaged() : managed = false, identity = null;
+final class _ConfigAssetExport {
+  const _ConfigAssetExport.unmanaged() : managed = false, identity = null;
 
-  const _AssistantAssetExport.managed(this.identity) : managed = true;
+  const _ConfigAssetExport.managed(this.identity) : managed = true;
 
   final bool managed;
   final E2eeConfigAssetRemoteIdentity? identity;
+}
+
+final class _ConfigAssetResolution {
+  const _ConfigAssetResolution.unmanaged(this.value) : managed = false;
+
+  const _ConfigAssetResolution.managed(this.value) : managed = true;
+
+  final bool managed;
+  final String? value;
 }
 
 bool _sameAssetIdentity(

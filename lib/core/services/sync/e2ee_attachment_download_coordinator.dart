@@ -10,7 +10,6 @@ import '../../database/chat_database_repository.dart';
 import 'cloud_sync_attachment_types.dart';
 import 'cloud_sync_client.dart';
 import 'cloud_sync_types.dart';
-import 'config_sync_keys.dart';
 import 'e2ee_attachment_crypto_session.dart';
 import 'e2ee_attachment_file_store.dart';
 import 'e2ee_attachment_manifest.dart';
@@ -689,21 +688,19 @@ List<_ConfigAssetDownloadReference> _configAssetReferences(
   E2eeSyncPulledValueChange change,
 ) {
   final entityKey = change.state.entityKey;
-  if (entityKey.entityType != ConfigSyncKeys.assistantType) {
+  final fields = e2eeConfigAssetPayloadFieldsFor(entityKey);
+  if (fields.isEmpty) {
     return const <_ConfigAssetDownloadReference>[];
   }
   final references = <_ConfigAssetDownloadReference>[];
   final attachmentIds = <String>{};
   final uploadIds = <String>{};
-  for (final entry in const <(String, E2eeConfigAssetSlot)>[
-    ('avatarAsset', E2eeConfigAssetSlot.avatar),
-    ('backgroundAsset', E2eeConfigAssetSlot.background),
-  ]) {
-    final raw = change.payload[entry.$1];
+  for (final field in fields) {
+    final raw = change.payload[field.identityField];
     if (raw == null) continue;
     final identity = E2eeConfigAssetRemoteIdentity.fromPayload(
       raw,
-      expectedKind: E2eeAttachmentKind.image,
+      expectedKind: field.kind,
     );
     if (!attachmentIds.add(identity.attachmentId) ||
         !uploadIds.add(identity.uploadId)) {
@@ -711,7 +708,7 @@ List<_ConfigAssetDownloadReference> _configAssetReferences(
     }
     references.add(
       _ConfigAssetDownloadReference(
-        key: E2eeConfigAssetKey(entityKey: entityKey, slot: entry.$2),
+        key: E2eeConfigAssetKey(entityKey: entityKey, slot: field.slot),
         reference: E2eeAttachmentDownloadReference(
           attachmentId: identity.attachmentId,
           uploadId: identity.uploadId,

@@ -32,6 +32,70 @@ enum E2eeConfigAssetSlot {
   }
 }
 
+final class E2eeConfigAssetPayloadField {
+  const E2eeConfigAssetPayloadField({
+    required this.identityField,
+    required this.portableValueField,
+    required this.slot,
+    required this.kind,
+    this.portableTypeField,
+  });
+
+  final String identityField;
+  final String portableValueField;
+  final String? portableTypeField;
+  final E2eeConfigAssetSlot slot;
+  final E2eeAttachmentKind kind;
+}
+
+const _assistantAssetPayloadFields = <E2eeConfigAssetPayloadField>[
+  E2eeConfigAssetPayloadField(
+    identityField: 'avatarAsset',
+    portableValueField: 'avatar',
+    slot: E2eeConfigAssetSlot.avatar,
+    kind: E2eeAttachmentKind.image,
+  ),
+  E2eeConfigAssetPayloadField(
+    identityField: 'backgroundAsset',
+    portableValueField: 'background',
+    slot: E2eeConfigAssetSlot.background,
+    kind: E2eeAttachmentKind.image,
+  ),
+];
+const _providerAssetPayloadFields = <E2eeConfigAssetPayloadField>[
+  E2eeConfigAssetPayloadField(
+    identityField: 'avatarAsset',
+    portableValueField: 'avatarValue',
+    portableTypeField: 'avatarType',
+    slot: E2eeConfigAssetSlot.avatar,
+    kind: E2eeAttachmentKind.image,
+  ),
+];
+const _profileAssetPayloadFields = <E2eeConfigAssetPayloadField>[
+  E2eeConfigAssetPayloadField(
+    identityField: 'avatarAsset',
+    portableValueField: 'avatarValue',
+    portableTypeField: 'avatarType',
+    slot: E2eeConfigAssetSlot.avatar,
+    kind: E2eeAttachmentKind.image,
+  ),
+];
+
+List<E2eeConfigAssetPayloadField> e2eeConfigAssetPayloadFieldsFor(
+  SyncEntityKey entityKey,
+) {
+  if (entityKey.entityType == ConfigSyncKeys.assistantType) {
+    return _assistantAssetPayloadFields;
+  }
+  if (entityKey.entityType == ConfigSyncKeys.providerType) {
+    return _providerAssetPayloadFields;
+  }
+  if (entityKey == ConfigSyncKeys.profile) {
+    return _profileAssetPayloadFields;
+  }
+  return const <E2eeConfigAssetPayloadField>[];
+}
+
 final class E2eeConfigAssetKey {
   E2eeConfigAssetKey({required this.entityKey, required this.slot}) {
     ConfigSyncKeys.validate(entityKey);

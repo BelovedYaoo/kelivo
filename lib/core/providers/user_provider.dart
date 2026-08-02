@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
@@ -8,6 +9,8 @@ import '../../utils/sandbox_path_resolver.dart';
 import '../../utils/avatar_cache.dart';
 import '../../utils/app_directories.dart';
 import '../services/sync/config_sync_keys.dart';
+import '../services/sync/e2ee_config_asset_types.dart';
+import '../services/sync/sync_codec.dart';
 import '../services/sync/sync_write_executor.dart';
 import '../utils/batched_change_notifier.dart';
 
@@ -36,6 +39,7 @@ class UserProvider extends ChangeNotifier with BatchedChangeNotifier {
   late final Future<void> ready;
   final SyncWriteExecutor _syncWrites;
   final _ManagedFileCopy _managedFileCopy;
+  final _UserAvatarOperationLock _avatarOperations = _UserAvatarOperationLock();
 
   UserProvider({required SyncWriteExecutor syncWriteExecutor})
     : this._(syncWriteExecutor: syncWriteExecutor);
@@ -121,11 +125,8 @@ class UserProvider extends ChangeNotifier with BatchedChangeNotifier {
     await ready;
     final e = emoji.trim();
     if (e.isEmpty) return;
-    await _syncWrites.runLocal(
-      key: ConfigSyncKeys.profile,
-      write: () async {
-        await _setAvatarStateLocked(type: 'emoji', value: e);
-      },
+    await _avatarOperations.run(
+      () => _writeAvatarState(type: 'emoji', value: e),
     );
   }
 
@@ -133,12 +134,7 @@ class UserProvider extends ChangeNotifier with BatchedChangeNotifier {
     await ready;
     final u = url.trim();
     if (u.isEmpty) return;
-    await _syncWrites.runLocal(
-      key: ConfigSyncKeys.profile,
-      write: () async {
-        await _setAvatarStateLocked(type: 'url', value: u);
-      },
-    );
+    await _avatarOperations.run(() => _writeAvatarState(type: 'url', value: u));
     // Prefetch to enable offline display later
     try {
       await AvatarCache.getPath(u);
@@ -158,53 +154,114 @@ class UserProvider extends ChangeNotifier with BatchedChangeNotifier {
     await ready;
     final selectedPath = path.trim();
     if (selectedPath.isEmpty) return;
-    await _syncWrites.runLocal(
-      key: ConfigSyncKeys.profile,
-      write: () async {
-        final fixedInput = SandboxPathResolver.resolveUserSelectedSource(
-          selectedPath,
-        );
-        final src = File(fixedInput);
-        if (!await src.exists()) {
-          throw FileSystemException('选择的用户头像文件不存在', fixedInput);
-        }
-        final avatars = await AppDirectories.getAvatarsDirectory();
-        if (!await avatars.exists()) {
-          await avatars.create(recursive: true);
-        }
-        final selectedExtension = p
-            .extension(p.basename(fixedInput))
-            .replaceFirst('.', '')
-            .toLowerCase();
-        final ext =
-            selectedExtension.isNotEmpty &&
-                selectedExtension.length <= 6 &&
-                RegExp(r'^[a-z0-9]+$').hasMatch(selectedExtension)
-            ? selectedExtension
-            : 'jpg';
-        final filename = 'avatar_${const Uuid().v4()}.$ext';
-        final dest = File(p.join(avatars.path, filename));
-        try {
-          await _managedFileCopy(src, dest);
-          await _setAvatarStateLocked(type: 'file', value: dest.path);
-        } catch (error, stackTrace) {
-          await _deleteManagedAvatarIfUnused(
-            dest.path,
-            context: '清理未提交的用户头像副本失败',
+    await _avatarOperations.run(() async {
+      if (_syncWrites is ConfigAssetSyncWriteExecutor) {
+        await _writeAvatarState(type: 'file', value: selectedPath);
+        return;
+      }
+      await _syncWrites.runLocal(
+        key: ConfigSyncKeys.profile,
+        write: () async {
+          final fixedInput = SandboxPathResolver.resolveUserSelectedSource(
+            selectedPath,
           );
-          Error.throwWithStackTrace(error, stackTrace);
-        }
-      },
-    );
+          final src = File(fixedInput);
+          if (!await src.exists()) {
+            throw FileSystemException('选择的用户头像文件不存在', fixedInput);
+          }
+          final avatars = await AppDirectories.getAvatarsDirectory();
+          if (!await avatars.exists()) {
+            await avatars.create(recursive: true);
+          }
+          final selectedExtension = p
+              .extension(p.basename(fixedInput))
+              .replaceFirst('.', '')
+              .toLowerCase();
+          final ext =
+              selectedExtension.isNotEmpty &&
+                  selectedExtension.length <= 6 &&
+                  RegExp(r'^[a-z0-9]+$').hasMatch(selectedExtension)
+              ? selectedExtension
+              : 'jpg';
+          final filename = 'avatar_${const Uuid().v4()}.$ext';
+          final dest = File(p.join(avatars.path, filename));
+          try {
+            await _managedFileCopy(src, dest);
+            await _setAvatarStateLocked(type: 'file', value: dest.path);
+          } catch (error, stackTrace) {
+            await _deleteManagedAvatarIfUnused(
+              dest.path,
+              context: '清理未提交的用户头像副本失败',
+            );
+            Error.throwWithStackTrace(error, stackTrace);
+          }
+        },
+      );
+    });
   }
 
   Future<void> resetAvatar() async {
     await ready;
-    await _syncWrites.runLocal(
-      key: ConfigSyncKeys.profile,
+    await _avatarOperations.run(() async {
+      if (_avatarType == null && _avatarValue == null) return;
+      await _writeAvatarState(type: null, value: null);
+    });
+  }
+
+  Future<void> _writeAvatarState({
+    required String? type,
+    required String? value,
+  }) async {
+    final executor = _syncWrites;
+    if (executor is! ConfigAssetSyncWriteExecutor) {
+      await executor.runLocal(
+        key: ConfigSyncKeys.profile,
+        write: () => _setAvatarStateLocked(type: type, value: value),
+      );
+      return;
+    }
+
+    final expectedType = _avatarType;
+    final expectedValue = _avatarValue;
+    final avatarKey = E2eeConfigAssetKey(
+      entityKey: ConfigSyncKeys.profile,
+      slot: E2eeConfigAssetSlot.avatar,
+    );
+    MaterializedConfigAsset? avatarAsset;
+    if (type == 'file') {
+      final sourcePath = value?.trim() ?? '';
+      if (sourcePath.isEmpty) {
+        throw const FormatException('用户文件头像缺少路径');
+      }
+      final materialized = await executor.materializeLocalConfigAssets(
+        <LocalConfigAssetInput>[
+          LocalConfigAssetInput(
+            key: avatarKey,
+            sourcePath: sourcePath,
+            kind: 'image',
+          ),
+        ],
+      );
+      if (materialized.length != 1 || materialized.single.key != avatarKey) {
+        throw StateError('E2EE 用户头像物化结果不完整');
+      }
+      avatarAsset = materialized.single;
+    }
+    await executor.runLocalBatchWithConfigAssets<bool>(
+      keys: const <SyncEntityKey>[ConfigSyncKeys.profile],
+      targets: <ConfigAssetSyncTarget>[
+        ConfigAssetSyncTarget(key: avatarKey, asset: avatarAsset),
+      ],
+      targetWasPersisted: (result) => result,
       write: () async {
-        if (_avatarType == null && _avatarValue == null) return;
-        await _setAvatarStateLocked(type: null, value: null);
+        if (_avatarType != expectedType || _avatarValue != expectedValue) {
+          throw StateError('用户头像在物化期间已发生变化');
+        }
+        await _setAvatarStateLocked(
+          type: type,
+          value: avatarAsset?.path ?? value,
+        );
+        return true;
       },
     );
   }
@@ -328,6 +385,22 @@ class UserProvider extends ChangeNotifier with BatchedChangeNotifier {
       previousAvatarPath,
       context: '同步后清理旧用户头像失败',
     );
+  }
+}
+
+final class _UserAvatarOperationLock {
+  Future<void> _tail = Future<void>.value();
+
+  Future<T> run<T>(Future<T> Function() action) async {
+    final previous = _tail;
+    final completed = Completer<void>();
+    _tail = completed.future;
+    await previous;
+    try {
+      return await action();
+    } finally {
+      completed.complete();
+    }
   }
 }
 

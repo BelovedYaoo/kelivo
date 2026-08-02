@@ -22,6 +22,7 @@ import '../utils/openai_model_compat.dart';
 import '../../utils/provider_grouping_logic.dart';
 import '../../utils/brand_assets.dart';
 import '../services/sync/config_sync_keys.dart';
+import '../services/sync/e2ee_config_asset_types.dart';
 import '../services/sync/sync_codec.dart';
 import '../services/sync/sync_write_executor.dart';
 import '../utils/batched_change_notifier.dart';
@@ -2994,9 +2995,74 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
 
   Future<void> setProviderConfig(String key, ProviderConfig config) async {
     await ready;
-    await _syncWrites.runLocalBatch(
+    await _mutateProviderConfig(key, (_) => config);
+  }
+
+  Future<void> _mutateProviderConfig(
+    String key,
+    ProviderConfig Function(ProviderConfig current) update,
+  ) async {
+    final executor = _syncWrites;
+    if (executor is! ConfigAssetSyncWriteExecutor) {
+      await executor.runLocalBatch(
+        keys: _providerMutationKeys(key),
+        write: () => _providerMutationLock.run(() async {
+          final current =
+              _providerConfigs[key] ?? ProviderConfig.defaultsFor(key);
+          final next = update(current);
+          await _setProviderConfigTransaction(key, next);
+        }),
+      );
+      return;
+    }
+
+    final previous = _providerConfigs[key];
+    final next = update(previous ?? ProviderConfig.defaultsFor(key));
+    final avatarChanged =
+        previous?.avatarType != next.avatarType ||
+        previous?.avatarValue != next.avatarValue;
+    final entityKey = ConfigSyncKeys.provider(key);
+    final avatarKey = E2eeConfigAssetKey(
+      entityKey: entityKey,
+      slot: E2eeConfigAssetSlot.avatar,
+    );
+    MaterializedConfigAsset? avatarAsset;
+    if (avatarChanged && next.avatarType == 'file') {
+      final sourcePath = next.avatarValue?.trim() ?? '';
+      if (sourcePath.isEmpty) {
+        throw const FormatException('供应商文件头像缺少路径');
+      }
+      final materialized = await executor.materializeLocalConfigAssets(
+        <LocalConfigAssetInput>[
+          LocalConfigAssetInput(
+            key: avatarKey,
+            sourcePath: sourcePath,
+            kind: 'image',
+          ),
+        ],
+      );
+      if (materialized.length != 1 || materialized.single.key != avatarKey) {
+        throw StateError('E2EE 供应商头像物化结果不完整');
+      }
+      avatarAsset = materialized.single;
+    }
+    final persisted = avatarAsset == null
+        ? next
+        : next.copyWith(avatarValue: avatarAsset.path);
+    await executor.runLocalBatchWithConfigAssets<bool>(
       keys: _providerMutationKeys(key),
-      write: () => _setProviderConfigLocked(key, config),
+      targets: <ConfigAssetSyncTarget>[
+        if (avatarChanged)
+          ConfigAssetSyncTarget(key: avatarKey, asset: avatarAsset),
+      ],
+      targetWasPersisted: (result) => result,
+      write: () => _providerMutationLock.run(() async {
+        if (!identical(_providerConfigs[key], previous)) {
+          throw StateError('供应商配置在头像物化期间已发生变化');
+        }
+        await _setProviderConfigTransaction(key, persisted);
+        return true;
+      }),
     );
   }
 
@@ -3172,15 +3238,9 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
     final e = emoji.trim();
     if (e.isEmpty) return;
     await ready;
-    await _syncWrites.runLocalBatch(
-      keys: _providerMutationKeys(key),
-      write: () async {
-        final old = getProviderConfig(key);
-        await _setProviderConfigLocked(
-          key,
-          old.copyWith(avatarType: 'emoji', avatarValue: e),
-        );
-      },
+    await _mutateProviderConfig(
+      key,
+      (old) => old.copyWith(avatarType: 'emoji', avatarValue: e),
     );
   }
 
@@ -3188,15 +3248,9 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
     final u = url.trim();
     if (u.isEmpty) return;
     await ready;
-    await _syncWrites.runLocalBatch(
-      keys: _providerMutationKeys(key),
-      write: () async {
-        final old = getProviderConfig(key);
-        await _setProviderConfigLocked(
-          key,
-          old.copyWith(avatarType: 'url', avatarValue: u),
-        );
-      },
+    await _mutateProviderConfig(
+      key,
+      (old) => old.copyWith(avatarType: 'url', avatarValue: u),
     );
     // Prefetch for offline
     try {
@@ -3217,6 +3271,13 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
     final selectedPath = path.trim();
     if (selectedPath.isEmpty) return;
     await ready;
+    if (_syncWrites is ConfigAssetSyncWriteExecutor) {
+      await _mutateProviderConfig(
+        key,
+        (old) => old.copyWith(avatarType: 'file', avatarValue: selectedPath),
+      );
+      return;
+    }
     await _syncWrites.runLocalBatch(
       keys: _providerMutationKeys(key),
       write: () async {
@@ -3263,15 +3324,9 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
     final normalized = BrandAssets.selectableAssetOrNull(asset.trim());
     if (normalized == null) return;
     await ready;
-    await _syncWrites.runLocalBatch(
-      keys: _providerMutationKeys(key),
-      write: () async {
-        final old = getProviderConfig(key);
-        await _setProviderConfigLocked(
-          key,
-          old.copyWith(avatarType: 'icon', avatarValue: normalized),
-        );
-      },
+    await _mutateProviderConfig(
+      key,
+      (old) => old.copyWith(avatarType: 'icon', avatarValue: normalized),
     );
   }
 
@@ -3279,32 +3334,19 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
     final trimmed = name.trim();
     if (trimmed.isEmpty) return;
     await ready;
-    await _syncWrites.runLocalBatch(
-      keys: _providerMutationKeys(key),
-      write: () async {
-        final old = getProviderConfig(key);
-        await _setProviderConfigLocked(
-          key,
-          old.copyWith(avatarType: 'lobehub', avatarValue: trimmed),
-        );
-      },
+    await _mutateProviderConfig(
+      key,
+      (old) => old.copyWith(avatarType: 'lobehub', avatarValue: trimmed),
     );
   }
 
   Future<void> resetProviderAvatar(String key) async {
     String? evictedUrl;
     await ready;
-    await _syncWrites.runLocalBatch(
-      keys: _providerMutationKeys(key),
-      write: () async {
-        final old = getProviderConfig(key);
-        evictedUrl = old.avatarType == 'url' ? old.avatarValue : null;
-        await _setProviderConfigLocked(
-          key,
-          old.copyWith(avatarType: null, avatarValue: null),
-        );
-      },
-    );
+    await _mutateProviderConfig(key, (old) {
+      evictedUrl = old.avatarType == 'url' ? old.avatarValue : null;
+      return old.copyWith(avatarType: null, avatarValue: null);
+    });
     if (evictedUrl != null && evictedUrl!.isNotEmpty) {
       try {
         await AvatarCache.evict(evictedUrl!);
@@ -3490,7 +3532,26 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
   Future<void> removeProviderConfig(String key) async {
     await ready;
     if (!_providerConfigs.containsKey(key)) return;
-    await _syncWrites.runLocalBatch(
+    final executor = _syncWrites;
+    if (executor is ConfigAssetSyncWriteExecutor) {
+      final entityKey = ConfigSyncKeys.provider(key);
+      await executor.runLocalBatchWithConfigAssets<bool>(
+        keys: _providerMutationKeys(key),
+        targets: <ConfigAssetSyncTarget>[
+          ConfigAssetSyncTarget(
+            key: E2eeConfigAssetKey(
+              entityKey: entityKey,
+              slot: E2eeConfigAssetSlot.avatar,
+            ),
+            asset: null,
+          ),
+        ],
+        targetWasPersisted: (result) => result,
+        write: () => _deleteProviderConfig(key),
+      );
+      return;
+    }
+    await executor.runLocalBatch<bool>(
       keys: _providerMutationKeys(key),
       write: () => _deleteProviderConfig(key),
     );
@@ -3502,13 +3563,13 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
     await _deleteProviderConfig(key);
   }
 
-  Future<void> _deleteProviderConfig(String key) async {
-    await _providerMutationLock.run(() => _deleteProviderConfigLocked(key));
+  Future<bool> _deleteProviderConfig(String key) {
+    return _providerMutationLock.run(() => _deleteProviderConfigLocked(key));
   }
 
-  Future<void> _deleteProviderConfigLocked(String key) async {
+  Future<bool> _deleteProviderConfigLocked(String key) async {
     final deletedConfig = _providerConfigs[key];
-    if (deletedConfig == null) return;
+    if (deletedConfig == null) return false;
     final nextConfigs = Map<String, ProviderConfig>.from(_providerConfigs)
       ..remove(key);
     final assignments = Map<String, String>.from(_providerGroupMap)
@@ -3588,6 +3649,7 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
       deletedConfig.avatarType == 'file' ? deletedConfig.avatarValue : null,
       context: '删除供应商后清理头像失败',
     );
+    return true;
   }
 
   // Favorites (pinned models)

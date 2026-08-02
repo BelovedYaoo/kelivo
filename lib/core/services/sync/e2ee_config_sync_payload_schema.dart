@@ -58,6 +58,7 @@ const _providerKeys = <String>{
   'proxyPassword',
   'avatarType',
   'avatarValue',
+  'avatarAsset',
   'multiKeyEnabled',
   'apiKeys',
   'keyManagement',
@@ -127,14 +128,26 @@ void _validateProvider(SyncEntityKey entityKey, Map<String, Object?> payload) {
   _nullableString(payload, 'proxyPort');
   _nullableString(payload, 'proxyUsername');
   _nullableString(payload, 'proxyPassword');
-  _nullableEnumString(payload, 'avatarType', const <String>{
+  final avatarType = _nullableEnumString(payload, 'avatarType', const <String>{
     'emoji',
     'url',
-    'file',
     'icon',
     'lobehub',
   });
-  _nullableString(payload, 'avatarValue');
+  final avatarValue = _nullableString(payload, 'avatarValue');
+  final avatarAsset = _nullableManagedAssetReference(
+    payload,
+    'avatarAsset',
+    expectedKind: E2eeAttachmentKind.image,
+  );
+  if ((avatarType == null) != (avatarValue == null) ||
+      (avatarValue != null && avatarValue.trim().isEmpty)) {
+    throw const FormatException('provider 头像类型和值必须同时有效');
+  }
+  if (avatarAsset != null && avatarType != null) {
+    throw const FormatException('provider 可移植头像与 avatarAsset 不能同时存在');
+  }
+  _rejectLocalPath(avatarValue, 'provider.avatarValue');
   _nullableBoolean(payload, 'multiKeyEnabled');
   _validateApiKeys(_requiredValue(payload, 'apiKeys'));
   _validateKeyManagement(_requiredValue(payload, 'keyManagement'));
@@ -767,18 +780,27 @@ void _validateProfilePreference(Map<String, Object?> payload) {
     'name',
     'avatarType',
     'avatarValue',
+    'avatarAsset',
   }, 'profile');
   _requiredString(payload, 'name');
   final avatarType = _nullableEnumString(payload, 'avatarType', const <String>{
     'emoji',
     'url',
-    'file',
   });
   final avatarValue = _nullableString(payload, 'avatarValue');
+  final avatarAsset = _nullableManagedAssetReference(
+    payload,
+    'avatarAsset',
+    expectedKind: E2eeAttachmentKind.image,
+  );
   if ((avatarType == null) != (avatarValue == null) ||
       (avatarValue != null && avatarValue.trim().isEmpty)) {
     throw const FormatException('profile 头像类型和值必须同时有效');
   }
+  if (avatarAsset != null && avatarType != null) {
+    throw const FormatException('profile 可移植头像与 avatarAsset 不能同时存在');
+  }
+  _rejectLocalPath(avatarValue, 'profile.avatarValue');
 }
 
 void _validateProviderGroupingPreference(Map<String, Object?> payload) {
