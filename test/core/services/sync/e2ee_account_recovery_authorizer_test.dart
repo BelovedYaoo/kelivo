@@ -1400,7 +1400,7 @@ final class _MemoryCheckpointPersistence
   }) : _snapshot = initialCheckpoint == null
            ? null
            : E2eeAccountRecoveryCheckpointSnapshot(
-               checkpoint: initialCheckpoint,
+               checkpoint: initialCheckpoint.detachedCopy(),
                envelopeDigest: _bytes(32, 0x90),
              );
 
@@ -1413,7 +1413,7 @@ final class _MemoryCheckpointPersistence
   @override
   Future<E2eeAccountRecoveryCheckpointSnapshot?> read() async {
     callOrder.add('checkpoint:read');
-    return _snapshot;
+    return _snapshot?.detachedCopy();
   }
 
   @override
@@ -1421,12 +1421,13 @@ final class _MemoryCheckpointPersistence
     E2eeAccountRecoveryCheckpoint checkpoint,
   ) async {
     callOrder.add('checkpoint:create');
-    final snapshot = E2eeAccountRecoveryCheckpointSnapshot(
-      checkpoint: checkpoint,
+    final persisted = E2eeAccountRecoveryCheckpointSnapshot(
+      checkpoint: checkpoint.detachedCopy(),
       envelopeDigest: _bytes(32, 0x91),
     );
-    _snapshot = snapshot;
-    return snapshot;
+    _snapshot?.clearSensitiveState();
+    _snapshot = persisted;
+    return persisted.detachedCopy();
   }
 
   @override
@@ -1437,14 +1438,15 @@ final class _MemoryCheckpointPersistence
     callOrder.add('checkpoint:${checkpoint.phase.name}');
     final concurrent = concurrentAdvanceCheckpoint;
     if (concurrent != null) {
+      _snapshot?.clearSensitiveState();
       _snapshot = E2eeAccountRecoveryCheckpointSnapshot(
-        checkpoint: concurrent,
+        checkpoint: concurrent.detachedCopy(),
         envelopeDigest: _bytes(32, 0x94),
       );
       throw StateError('模拟 checkpoint CAS 竞争');
     }
-    final snapshot = E2eeAccountRecoveryCheckpointSnapshot(
-      checkpoint: checkpoint,
+    final persisted = E2eeAccountRecoveryCheckpointSnapshot(
+      checkpoint: checkpoint.detachedCopy(),
       envelopeDigest: _bytes(
         32,
         checkpoint.phase == E2eeAccountRecoveryCheckpointPhase.proofReady
@@ -1452,12 +1454,14 @@ final class _MemoryCheckpointPersistence
             : 0x93,
       ),
     );
-    _snapshot = snapshot;
-    return snapshot;
+    _snapshot?.clearSensitiveState();
+    _snapshot = persisted;
+    return persisted.detachedCopy();
   }
 
   @override
   Future<bool> delete(E2eeAccountRecoveryCheckpointSnapshot snapshot) async {
+    _snapshot?.clearSensitiveState();
     _snapshot = null;
     return true;
   }

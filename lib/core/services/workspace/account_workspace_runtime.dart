@@ -66,6 +66,42 @@ final class AccountWorkspaceRestartRequired extends AccountWorkspaceBindResult {
   const AccountWorkspaceRestartRequired(super.target);
 }
 
+final class AccountRecoveryWorkspaceContext {
+  const AccountRecoveryWorkspaceContext._({
+    required this.workspaceKey,
+    required this.dataDirectory,
+    required this.accountScope,
+  });
+
+  final String workspaceKey;
+  final Directory dataDirectory;
+  final String accountScope;
+}
+
+final class AccountRecoveryWorkspaceLease {
+  AccountRecoveryWorkspaceLease._(this._runtime, this._context);
+
+  AccountWorkspaceRuntime? _runtime;
+  final AccountRecoveryWorkspaceContext _context;
+
+  AccountRecoveryWorkspaceContext get context {
+    if (_runtime == null) {
+      throw StateError('account_recovery_workspace_lease_closed');
+    }
+    return _context;
+  }
+
+  Directory get dataDirectory => context.dataDirectory;
+
+  Future<void> close() {
+    final runtime = _runtime;
+    if (runtime == null) return Future<void>.value();
+    runtime._releaseRecoveryWorkspaceLease(this);
+    _runtime = null;
+    return Future<void>.value();
+  }
+}
+
 final class AccountWorkspaceRuntime {
   AccountWorkspaceRuntime._(
     this.installationRoot,
@@ -104,12 +140,17 @@ final class AccountWorkspaceRuntime {
   String? _registrySlot;
   // 活动账号指针清除后，只能依靠注册表队列跨进程定位待清理令牌。
   final Set<String> _pendingTokenCleanup;
+  AccountRecoveryWorkspaceLease? _activeRecoveryWorkspaceLease;
+  bool _workspaceMutationInProgress = false;
   bool _closed = false;
 
   AccountWorkspaceContext get current => _current;
 
   Future<Set<String>> registeredPreferencesPrefixes() async {
     _requireOpen();
+    if (_workspaceMutationInProgress) {
+      throw StateError('account_workspace_runtime_busy');
+    }
     await _ensureTrustedInstallationRoot(
       directory: installationRoot,
       createMissing: false,
@@ -178,46 +219,50 @@ final class AccountWorkspaceRuntime {
   Future<void> discardPlaintextLocalState({
     required Future<void> Function() retirePersistentLogs,
   }) async {
-    _requireOpen();
-    await _ensureTrustedInstallationRoot(
-      directory: installationRoot,
-      createMissing: false,
-    );
-    final dataDirectories = await _existingDataDirectories();
-    // 所有工作区必须先通过拓扑校验，避免后发现歧义时只清掉一部分旧状态。
-    for (final dataDirectory in dataDirectories) {
-      await DatabaseEncryptionCutover.validatePlaintextStateTopology(
-        appDataDirectory: dataDirectory,
+    _beginWorkspaceMutation();
+    try {
+      await _ensureTrustedInstallationRoot(
+        directory: installationRoot,
+        createMissing: false,
       );
-      await CloudSyncStateRetirement.validatePlaintextStateTopology(
-        appDataDirectory: dataDirectory,
+      final dataDirectories = await _existingDataDirectories();
+      // 所有工作区必须先通过拓扑校验，避免后发现歧义时只清掉一部分旧状态。
+      for (final dataDirectory in dataDirectories) {
+        await DatabaseEncryptionCutover.validatePlaintextStateTopology(
+          appDataDirectory: dataDirectory,
+        );
+        await CloudSyncStateRetirement.validatePlaintextStateTopology(
+          appDataDirectory: dataDirectory,
+        );
+      }
+      // 原生会话锚定安装根并统一枚举所有工作区；失败时不得先删除其他明文状态。
+      await retirePersistentLogs();
+      // 拓扑检查与删除之间不能复用旧路径结论，否则运行期重解析替换会越过安装边界。
+      await _ensureTrustedInstallationRoot(
+        directory: installationRoot,
+        createMissing: false,
       );
-    }
-    // 原生会话锚定安装根并统一枚举所有工作区；失败时不得先删除其他旧状态。
-    await retirePersistentLogs();
-    // 拓扑检查与删除之间不能复用旧路径结论，否则运行期重解析替换会越过安装边界。
-    await _ensureTrustedInstallationRoot(
-      directory: installationRoot,
-      createMissing: false,
-    );
-    for (final dataDirectory in dataDirectories) {
-      await DatabaseEncryptionCutover.discardPlaintextState(
-        appDataDirectory: dataDirectory,
+      for (final dataDirectory in dataDirectories) {
+        await DatabaseEncryptionCutover.discardPlaintextState(
+          appDataDirectory: dataDirectory,
+          durability: _durability,
+        );
+        await CloudSyncStateRetirement.discardPlaintextState(
+          appDataDirectory: dataDirectory,
+          durability: _durability,
+        );
+      }
+      await _ensureTrustedInstallationRoot(
+        directory: installationRoot,
+        createMissing: false,
+      );
+      await DatabaseEncryptionCutover.discardLegacyDatabaseFamily(
+        appDataDirectory: installationRoot,
         durability: _durability,
       );
-      await CloudSyncStateRetirement.discardPlaintextState(
-        appDataDirectory: dataDirectory,
-        durability: _durability,
-      );
+    } finally {
+      _endWorkspaceMutation();
     }
-    await _ensureTrustedInstallationRoot(
-      directory: installationRoot,
-      createMissing: false,
-    );
-    await DatabaseEncryptionCutover.discardLegacyDatabaseFamily(
-      appDataDirectory: installationRoot,
-      durability: _durability,
-    );
   }
 
   static Future<AccountWorkspaceRuntime> bootstrap({
@@ -445,55 +490,98 @@ final class AccountWorkspaceRuntime {
   Future<AccountWorkspaceBindResult> bindAccount(
     CloudSyncAccountSession session,
   ) async {
-    _requireOpen();
-    final scope = session.accountScope;
-    final workspaceKey = _workspaceKey(scope);
-    final dataDirectory = await _ensureAccountDataDirectory(
-      workspaceKey,
-      createAccount: true,
-    );
-    final target = _accountContext(
-      workspaceKey: workspaceKey,
-      dataDirectory: dataDirectory,
-      accountScope: scope,
-      session: session,
-    );
-    await _writeAccountRecord(
-      workspaceKey: workspaceKey,
-      accountScope: scope,
-      session: session,
-    );
+    _beginWorkspaceMutation();
+    try {
+      final scope = session.accountScope;
+      final workspaceKey = _workspaceKey(scope);
+      final dataDirectory = await _ensureAccountDataDirectory(
+        workspaceKey,
+        createAccount: true,
+      );
+      final target = _accountContext(
+        workspaceKey: workspaceKey,
+        dataDirectory: dataDirectory,
+        accountScope: scope,
+        session: session,
+      );
+      await _writeAccountRecord(
+        workspaceKey: workspaceKey,
+        accountScope: scope,
+        session: session,
+      );
 
-    if (_current.accountScope == scope) {
-      _current = _current._withSession(session);
-      return AccountWorkspaceRetained(_current);
+      if (_current.accountScope == scope) {
+        _current = _current._withSession(session);
+        return AccountWorkspaceRetained(_current);
+      }
+
+      await _writeRegistry(workspaceKey);
+      return AccountWorkspaceRestartRequired(target);
+    } finally {
+      _endWorkspaceMutation();
     }
+  }
 
-    await _writeRegistry(workspaceKey);
-    return AccountWorkspaceRestartRequired(target);
+  Future<AccountRecoveryWorkspaceLease> prepareAccountWorkspace({
+    required String canonicalBaseUrl,
+    required String userId,
+  }) async {
+    _beginWorkspaceMutation();
+    try {
+      final accountScope = cloudSyncAccountScope(
+        canonicalBaseUrl: canonicalBaseUrl,
+        userId: userId,
+      );
+      final workspaceKey = _workspaceKey(accountScope);
+      final dataDirectory = await _ensureAccountDataDirectory(
+        workspaceKey,
+        createAccount: true,
+      );
+      final lease = AccountRecoveryWorkspaceLease._(
+        this,
+        AccountRecoveryWorkspaceContext._(
+          workspaceKey: workspaceKey,
+          dataDirectory: dataDirectory,
+          accountScope: accountScope,
+        ),
+      );
+      _activeRecoveryWorkspaceLease = lease;
+      return lease;
+    } finally {
+      _endWorkspaceMutation();
+    }
   }
 
   Future<AccountWorkspaceRestartRequired> signOut() async {
-    _requireOpen();
-    final scope = _current.accountScope;
-    if (scope == null) {
-      throw StateError('account_workspace_already_local');
-    }
+    _beginWorkspaceMutation();
+    try {
+      final scope = _current.accountScope;
+      if (scope == null) {
+        throw StateError('account_workspace_already_local');
+      }
 
-    // 先发布无凭证记录，再切换活动工作区。任一步骤中断都只会留下
-    // 离线账号工作区，不会让已退出的凭证继续参与同步。
-    await _writeAccountRecord(
-      workspaceKey: _current.workspaceKey,
-      accountScope: scope,
-      session: null,
-    );
-    _current = _current._withoutSession();
-    await _writeRegistry(null);
-    return AccountWorkspaceRestartRequired(_localContext(_localDataDirectory));
+      // 先发布无凭证记录，再切换活动工作区。任一步骤中断都只会留下
+      // 离线账号工作区，不会让已退出的凭证继续参与同步。
+      await _writeAccountRecord(
+        workspaceKey: _current.workspaceKey,
+        accountScope: scope,
+        session: null,
+      );
+      _current = _current._withoutSession();
+      await _writeRegistry(null);
+      return AccountWorkspaceRestartRequired(
+        _localContext(_localDataDirectory),
+      );
+    } finally {
+      _endWorkspaceMutation();
+    }
   }
 
   Future<void> close() async {
     if (_closed) return;
+    if (_workspaceMutationInProgress || _activeRecoveryWorkspaceLease != null) {
+      throw StateError('account_workspace_runtime_busy');
+    }
     _closed = true;
     await _lease.close();
   }
@@ -692,6 +780,25 @@ final class AccountWorkspaceRuntime {
 
   void _requireOpen() {
     if (_closed) throw StateError('account_workspace_runtime_closed');
+  }
+
+  void _beginWorkspaceMutation() {
+    _requireOpen();
+    if (_workspaceMutationInProgress || _activeRecoveryWorkspaceLease != null) {
+      throw StateError('account_workspace_runtime_busy');
+    }
+    _workspaceMutationInProgress = true;
+  }
+
+  void _endWorkspaceMutation() {
+    _workspaceMutationInProgress = false;
+  }
+
+  void _releaseRecoveryWorkspaceLease(AccountRecoveryWorkspaceLease lease) {
+    if (!identical(_activeRecoveryWorkspaceLease, lease)) {
+      throw StateError('account_recovery_workspace_lease_owner');
+    }
+    _activeRecoveryWorkspaceLease = null;
   }
 
   static AccountWorkspaceContext _localContext(Directory dataDirectory) {

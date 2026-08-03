@@ -151,6 +151,16 @@ abstract interface class CloudSyncSessionTransport {
   });
 }
 
+abstract interface class E2eeAccountRecoveryClient
+    implements
+        CloudSyncAccountClient,
+        CloudSyncSessionTransport,
+        E2eeAccountRecoveryTransport {
+  CloudSyncDataRekeyTransport accountRecoveryDataRekeyTransport(
+    CloudSyncAccountRecoveryToken recoveryToken,
+  );
+}
+
 abstract interface class CloudSyncSelfRevocationTransport {
   Future<CloudSyncSelfRevocationRequestResult> createSelfRevocationRequest(
     CloudSyncSelfRevocationRequest request,
@@ -201,12 +211,10 @@ abstract interface class CloudSyncDataRekeyTransport
 
 final class CloudSyncClient
     implements
-        CloudSyncAccountClient,
+        E2eeAccountRecoveryClient,
         CloudSyncAttachmentTransport,
         CloudSyncDataRekeyTransport,
         CloudSyncSelfRevocationTransport,
-        CloudSyncSessionTransport,
-        E2eeAccountRecoveryTransport,
         CloudSyncRecordTransport {
   CloudSyncClient._({
     required this.baseUrl,
@@ -303,6 +311,7 @@ final class CloudSyncClient
     _dio.close(force: force);
   }
 
+  @override
   CloudSyncDataRekeyTransport accountRecoveryDataRekeyTransport(
     CloudSyncAccountRecoveryToken recoveryToken,
   ) {

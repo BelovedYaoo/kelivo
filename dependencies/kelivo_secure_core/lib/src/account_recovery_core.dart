@@ -255,14 +255,29 @@ final class KelivoPreparedAccountRecoveryDeviceStates {
   KelivoPreparedAccountRecoveryDeviceStates._({
     required Uint8List unprunedStateBlob,
     required Uint8List prunedCandidate,
-    required Uint8List continuation,
+    required Uint8List ownedContinuation,
   }) : unprunedStateBlob = _immutableDeviceBytes(unprunedStateBlob),
        prunedCandidate = _immutableDeviceBytes(prunedCandidate),
-       continuation = _immutableDeviceBytes(continuation);
+       _continuation = ownedContinuation;
 
   final Uint8List unprunedStateBlob;
   final Uint8List prunedCandidate;
-  final Uint8List continuation;
+  Uint8List? _continuation;
+
+  Uint8List takeContinuation() {
+    final continuation = _continuation;
+    if (continuation == null) {
+      throw StateError('账户恢复 continuation 已被消费');
+    }
+    _continuation = null;
+    return continuation;
+  }
+
+  void dispose() {
+    final continuation = _continuation;
+    continuation?.fillRange(0, continuation.length, 0);
+    _continuation = null;
+  }
 }
 
 final class KelivoAccountRecoveryProof {
@@ -1579,6 +1594,8 @@ KelivoPreparedAccountRecoveryDeviceStates _prepareAccountRecoveryDeviceStates(
     kelivoAccountRecoveryContinuationLength,
   );
   final continuationLength = calloc<ffi.Size>();
+  Uint8List? continuationBytes;
+  var continuationTransferred = false;
   try {
     _writeAccountRecoveryStateBinding(expected.ref, stateBinding);
     _throwOnError(
@@ -1619,18 +1636,23 @@ KelivoPreparedAccountRecoveryDeviceStates _prepareAccountRecoveryDeviceStates(
     final prunedBytes = Uint8List.fromList(
       pruned.asTypedList(_deviceStateBlobLength),
     );
-    final continuationBytes = Uint8List.fromList(
+    continuationBytes = Uint8List.fromList(
       continuation.asTypedList(kelivoAccountRecoveryContinuationLength),
     );
     if (_sameAccountRecoveryBytes(unprunedBytes, prunedBytes)) {
       throw StateError('账户恢复设备状态候选必须彼此不同');
     }
-    return KelivoPreparedAccountRecoveryDeviceStates._(
+    final result = KelivoPreparedAccountRecoveryDeviceStates._(
       unprunedStateBlob: unprunedBytes,
       prunedCandidate: prunedBytes,
-      continuation: continuationBytes,
+      ownedContinuation: continuationBytes,
     );
+    continuationTransferred = true;
+    return result;
   } finally {
+    if (!continuationTransferred) {
+      continuationBytes?.fillRange(0, continuationBytes.length, 0);
+    }
     _clearAndFree(
       expected.cast<ffi.Uint8>(),
       ffi.sizeOf<native.KelivoAccountRecoveryStateBinding>(),

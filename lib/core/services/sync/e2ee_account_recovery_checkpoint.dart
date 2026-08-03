@@ -8,15 +8,15 @@ import '../workspace/device_state_blob_store.dart';
 import 'cloud_sync_types.dart';
 import 'e2ee_account_recovery.dart';
 
-const _checkpointVersion = 6;
+const _checkpointVersion = 7;
 const _checkpointRecordEpoch = 1;
 const _checkpointTokenLength = 59;
 const _checkpointFullSessionTokenLength = 50;
 const _checkpointCapsuleMaximumLength = 4096;
-const _checkpointRecordDomain = 'kelivo.account-recovery.checkpoint.record.v6';
+const _checkpointRecordDomain = 'kelivo.account-recovery.checkpoint.record.v7';
 const _checkpointAssociatedDataDomain =
-    'kelivo.account-recovery.checkpoint.aad.v6';
-final _checkpointMagic = Uint8List.fromList(ascii.encode('KELVARC6'));
+    'kelivo.account-recovery.checkpoint.aad.v7';
+final _checkpointMagic = Uint8List.fromList(ascii.encode('KELVARC7'));
 
 final class E2eeAccountRecoveryCheckpointStore
     implements E2eeAccountRecoveryCheckpointPersistence {
@@ -105,8 +105,16 @@ final class E2eeAccountRecoveryCheckpointStore
   ) async {
     final current = await read();
     if (current != null) {
-      if (_sameCheckpoint(current.checkpoint, checkpoint)) return current;
-      throw StateError('账户恢复 checkpoint 已存在');
+      var retainCurrent = false;
+      try {
+        if (_sameCheckpoint(current.checkpoint, checkpoint)) {
+          retainCurrent = true;
+          return current;
+        }
+        throw StateError('账户恢复 checkpoint 已存在');
+      } finally {
+        if (!retainCurrent) current.clearSensitiveState();
+      }
     }
     final envelope = await _seal(checkpoint);
     try {
@@ -118,13 +126,21 @@ final class E2eeAccountRecoveryCheckpointStore
         );
       } on StateError {
         final raced = await read();
-        if (raced != null && _sameCheckpoint(raced.checkpoint, checkpoint)) {
-          return raced;
+        if (raced != null) {
+          var retainRaced = false;
+          try {
+            if (_sameCheckpoint(raced.checkpoint, checkpoint)) {
+              retainRaced = true;
+              return raced;
+            }
+          } finally {
+            if (!retainRaced) raced.clearSensitiveState();
+          }
         }
         rethrow;
       }
       return E2eeAccountRecoveryCheckpointSnapshot(
-        checkpoint: checkpoint,
+        checkpoint: checkpoint.detachedCopy(),
         envelopeDigest: _digest(envelope),
       );
     } finally {
@@ -144,11 +160,17 @@ final class E2eeAccountRecoveryCheckpointStore
     if (current == null) {
       throw StateError('账户恢复 checkpoint 不存在');
     }
-    if (_sameCheckpoint(current.checkpoint, checkpoint)) {
-      return current;
-    }
-    if (!_sameBytes(current.envelopeDigest, expectedEnvelopeDigest)) {
-      throw StateError('账户恢复 checkpoint 已被并发推进');
+    var retainCurrent = false;
+    try {
+      if (_sameCheckpoint(current.checkpoint, checkpoint)) {
+        retainCurrent = true;
+        return current;
+      }
+      if (!_sameBytes(current.envelopeDigest, expectedEnvelopeDigest)) {
+        throw StateError('账户恢复 checkpoint 已被并发推进');
+      }
+    } finally {
+      if (!retainCurrent) current.clearSensitiveState();
     }
     final envelope = await _seal(checkpoint);
     try {
@@ -161,13 +183,21 @@ final class E2eeAccountRecoveryCheckpointStore
         );
       } on StateError {
         final raced = await read();
-        if (raced != null && _sameCheckpoint(raced.checkpoint, checkpoint)) {
-          return raced;
+        if (raced != null) {
+          var retainRaced = false;
+          try {
+            if (_sameCheckpoint(raced.checkpoint, checkpoint)) {
+              retainRaced = true;
+              return raced;
+            }
+          } finally {
+            if (!retainRaced) raced.clearSensitiveState();
+          }
         }
         rethrow;
       }
       return E2eeAccountRecoveryCheckpointSnapshot(
-        checkpoint: checkpoint,
+        checkpoint: checkpoint.detachedCopy(),
         envelopeDigest: _digest(envelope),
       );
     } finally {
@@ -396,78 +426,100 @@ void _writeProgress(
       :final authorization,
       :final resumeReceipt,
       :final completion,
+      :final reopenBinding,
     ):
       _writeAuthorization(writer, authorization);
       _writeReceipt(writer, resumeReceipt);
       _writeCompletion(writer, completion);
+      _writeReopenBinding(writer, reopenBinding);
     case E2eeAccountRecoveryReplacementChallengeRequestedProgress(
       :final authorization,
       :final resumeReceipt,
       :final completion,
       :final request,
+      :final reopenBinding,
     ):
       _writeAuthorization(writer, authorization);
       _writeReceipt(writer, resumeReceipt);
       _writeCompletion(writer, completion);
       _writeReplacementChallengeRequest(writer, request);
+      _writeReopenBinding(writer, reopenBinding);
     case E2eeAccountRecoveryReplacementChallengeReceivedProgress(
       :final authorization,
       :final challenge,
+      :final reopenBinding,
     ):
       _writeAuthorization(writer, authorization);
       _writeReplacementChallenge(writer, challenge);
+      _writeReopenBinding(writer, reopenBinding);
     case E2eeAccountRecoveryReplacementProofReadyProgress(
       :final authorization,
       :final challenge,
       :final proof,
+      :final reopenBinding,
     ):
       _writeAuthorization(writer, authorization);
       _writeReplacementChallenge(writer, challenge);
       _writeProof(writer, proof);
+      _writeReopenBinding(writer, reopenBinding);
     case E2eeAccountRecoveryReplacementPreparedProgress(
       :final authorization,
       :final transition,
+      :final reopenBinding,
     ):
       _writeAuthorization(writer, authorization);
       _writeTransition(writer, transition);
+      _writeOptionalReopenBinding(writer, reopenBinding);
     case E2eeAccountRecoveryReplacementCommittedProgress(
       :final authorization,
       :final transition,
       :final receipt,
+      :final reopenBinding,
     ):
       _writeAuthorization(writer, authorization);
       _writeTransition(writer, transition);
       _writeReceipt(writer, receipt);
+      _writeOptionalReopenBinding(writer, reopenBinding);
     case E2eeAccountRecoverySecondRekeyFinalizedProgress(
       :final authorization,
       :final transition,
       :final receipt,
       :final completion,
+      :final reopenBinding,
     ):
       _writeAuthorization(writer, authorization);
       _writeTransition(writer, transition);
       _writeReceipt(writer, receipt);
       _writeCompletion(writer, completion);
+      _writeOptionalReopenBinding(writer, reopenBinding);
     case E2eeAccountRecoverySecondLocalActivatedProgress(
       :final authorization,
       :final completionSession,
       :final replacementReceipt,
       :final completion,
+      :final reopenBinding,
     ):
       _writeAuthorization(writer, authorization);
       _writeCompletionSession(writer, completionSession);
       _writeReceipt(writer, replacementReceipt);
       _writeCompletion(writer, completion);
+      _writeReopenBinding(writer, reopenBinding);
     case E2eeAccountRecoverySessionVerifiedProgress(
       :final authorization,
       :final completionSession,
       :final replacementReceipt,
       :final completion,
+      :final reopenBinding,
+      :final sessionGeneration,
+      :final tokenExpiresAt,
     ):
       _writeAuthorization(writer, authorization);
       _writeCompletionSession(writer, completionSession);
       _writeReceipt(writer, replacementReceipt);
       _writeCompletion(writer, completion);
+      _writeReopenBinding(writer, reopenBinding);
+      writer.uint32(sessionGeneration);
+      writer.unixSeconds(tokenExpiresAt);
   }
 }
 
@@ -521,6 +573,7 @@ E2eeAccountRecoveryCheckpointProgress _readProgress(
         authorization: _readAuthorization(reader),
         resumeReceipt: _readReceipt(reader),
         completion: _readCompletion(reader),
+        reopenBinding: _readReopenBinding(reader),
       );
     case E2eeAccountRecoveryCheckpointPhase.replacementChallengeRequested:
       return E2eeAccountRecoveryReplacementChallengeRequestedProgress(
@@ -528,17 +581,20 @@ E2eeAccountRecoveryCheckpointProgress _readProgress(
         resumeReceipt: _readReceipt(reader),
         completion: _readCompletion(reader),
         request: _readReplacementChallengeRequest(reader),
+        reopenBinding: _readReopenBinding(reader),
       );
     case E2eeAccountRecoveryCheckpointPhase.replacementChallengeReceived:
       return E2eeAccountRecoveryReplacementChallengeReceivedProgress(
         authorization: _readAuthorization(reader),
         challenge: _readReplacementChallenge(reader),
+        reopenBinding: _readReopenBinding(reader),
       );
     case E2eeAccountRecoveryCheckpointPhase.replacementProofReady:
       return E2eeAccountRecoveryReplacementProofReadyProgress(
         authorization: _readAuthorization(reader),
         challenge: _readReplacementChallenge(reader),
         proof: _readProof(reader),
+        reopenBinding: _readReopenBinding(reader),
       );
     case E2eeAccountRecoveryCheckpointPhase.replacementPrepared:
       final authorization = _readAuthorization(reader);
@@ -548,6 +604,7 @@ E2eeAccountRecoveryCheckpointProgress _readProgress(
         () => E2eeAccountRecoveryReplacementPreparedProgress(
           authorization: authorization,
           transition: transition,
+          reopenBinding: _readOptionalReopenBinding(reader),
         ),
       );
     case E2eeAccountRecoveryCheckpointPhase.replacementCommitted:
@@ -559,6 +616,7 @@ E2eeAccountRecoveryCheckpointProgress _readProgress(
           authorization: authorization,
           transition: transition,
           receipt: _readReceipt(reader),
+          reopenBinding: _readOptionalReopenBinding(reader),
         ),
       );
     case E2eeAccountRecoveryCheckpointPhase.secondRekeyFinalized:
@@ -571,6 +629,7 @@ E2eeAccountRecoveryCheckpointProgress _readProgress(
           transition: transition,
           receipt: _readReceipt(reader),
           completion: _readCompletion(reader),
+          reopenBinding: _readOptionalReopenBinding(reader),
         ),
       );
     case E2eeAccountRecoveryCheckpointPhase.secondLocalActivated:
@@ -579,6 +638,7 @@ E2eeAccountRecoveryCheckpointProgress _readProgress(
         completionSession: _readCompletionSession(reader),
         replacementReceipt: _readReceipt(reader),
         completion: _readCompletion(reader),
+        reopenBinding: _readReopenBinding(reader),
       );
     case E2eeAccountRecoveryCheckpointPhase.sessionVerified:
       return E2eeAccountRecoverySessionVerifiedProgress(
@@ -586,6 +646,9 @@ E2eeAccountRecoveryCheckpointProgress _readProgress(
         completionSession: _readCompletionSession(reader),
         replacementReceipt: _readReceipt(reader),
         completion: _readCompletion(reader),
+        reopenBinding: _readReopenBinding(reader),
+        sessionGeneration: reader.uint32(),
+        tokenExpiresAt: reader.unixSeconds(),
       );
   }
 }
@@ -629,6 +692,77 @@ E2eeAccountRecoveryCheckpointAuthorization _readAuthorization(
     recoveryTokenExpiresAt: reader.timestamp(),
     nextAction: _parseNextAction(reader.uint32()),
   );
+}
+
+void _writeOptionalReopenBinding(
+  _CheckpointWriter writer,
+  E2eeAccountRecoveryReopenBinding? binding,
+) {
+  writer.uint32(binding == null ? 0 : 1);
+  if (binding != null) _writeReopenBinding(writer, binding);
+}
+
+E2eeAccountRecoveryReopenBinding? _readOptionalReopenBinding(
+  _CheckpointReader reader,
+) {
+  return switch (reader.uint32()) {
+    0 => null,
+    1 => _readReopenBinding(reader),
+    _ => throw const FormatException('账户恢复 checkpoint 重开绑定标记无效'),
+  };
+}
+
+void _writeReopenBinding(
+  _CheckpointWriter writer,
+  E2eeAccountRecoveryReopenBinding binding,
+) {
+  final membershipDigest = binding.membershipManifestDigest;
+  final stateDigest = binding.prunedStateDigest;
+  try {
+    writer.uuid(binding.userId);
+    writer.uuid(binding.deviceId);
+    writer.uint32(binding.deviceKeyVersion);
+    writer.uint32(binding.deviceAuthGeneration);
+    writer.uint32(binding.keyEpoch);
+    writer.uint32(binding.dataGeneration);
+    writer.uint32(binding.membershipGeneration);
+    writer.bytes(membershipDigest);
+    writer.uuid(binding.membershipOperationId);
+    writer.bytes(stateDigest);
+  } finally {
+    _clear(membershipDigest);
+    _clear(stateDigest);
+  }
+}
+
+E2eeAccountRecoveryReopenBinding _readReopenBinding(_CheckpointReader reader) {
+  final userId = reader.uuid();
+  final deviceId = reader.uuid();
+  final deviceKeyVersion = reader.uint32();
+  final deviceAuthGeneration = reader.uint32();
+  final keyEpoch = reader.uint32();
+  final dataGeneration = reader.uint32();
+  final membershipGeneration = reader.uint32();
+  final membershipDigest = reader.bytes(cloudSyncMembershipManifestDigestBytes);
+  final membershipOperationId = reader.uuid();
+  final stateDigest = reader.bytes(32);
+  try {
+    return E2eeAccountRecoveryReopenBinding(
+      userId: userId,
+      deviceId: deviceId,
+      deviceKeyVersion: deviceKeyVersion,
+      deviceAuthGeneration: deviceAuthGeneration,
+      keyEpoch: keyEpoch,
+      dataGeneration: dataGeneration,
+      membershipGeneration: membershipGeneration,
+      membershipManifestDigest: membershipDigest,
+      membershipOperationId: membershipOperationId,
+      prunedStateDigest: stateDigest,
+    );
+  } finally {
+    _clear(membershipDigest);
+    _clear(stateDigest);
+  }
 }
 
 void _writeTransition(
@@ -1256,6 +1390,12 @@ final class _CheckpointWriter {
     uint64(value.toUtc().millisecondsSinceEpoch);
   }
 
+  void unixSeconds(DateTime value) {
+    uint64(
+      value.toUtc().millisecondsSinceEpoch ~/ Duration.millisecondsPerSecond,
+    );
+  }
+
   void uuid(String value) {
     final compact = value.replaceAll('-', '');
     if (compact.length != 32) {
@@ -1339,6 +1479,17 @@ final class _CheckpointReader {
       throw const FormatException('账户恢复 checkpoint 时间戳无效');
     }
     return DateTime.fromMillisecondsSinceEpoch(milliseconds, isUtc: true);
+  }
+
+  DateTime unixSeconds() {
+    final seconds = uint64();
+    if (seconds <= 0) {
+      throw const FormatException('账户恢复 checkpoint 时间戳无效');
+    }
+    return DateTime.fromMillisecondsSinceEpoch(
+      seconds * Duration.millisecondsPerSecond,
+      isUtc: true,
+    );
   }
 
   String uuid() {

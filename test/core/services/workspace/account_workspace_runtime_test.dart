@@ -2170,6 +2170,298 @@ void main() {
     await expectLater(bootstrap(), throwsA(isA<StateError>()));
   });
 
+  test('恢复准备返回与正式账号会话完全一致的只读工作区上下文', () async {
+    const userId = '00000000-0000-4000-8000-000000000001';
+    const accountScope =
+        'https%3A%2F%2Fkelivo.bemylover.top%0A'
+        '00000000-0000-4000-8000-000000000001';
+    const workspaceKey =
+        '4102ac9159d0624d412dc12621d66ab3b99be7287a9216be6a5e152702e48752';
+    final runtime = await bootstrap();
+    final session = _session(
+      userId: 'recovery-target',
+      token: 'recovery-target-token',
+    );
+    final lease = await runtime.prepareAccountWorkspace(
+      canonicalBaseUrl: defaultCloudSyncBaseUrl,
+      userId: userId,
+    );
+    final prepared = lease.context;
+
+    expect(prepared.accountScope, accountScope);
+    expect(
+      prepared.accountScope,
+      CloudSyncAccountSession(
+        baseUrl: defaultCloudSyncBaseUrl,
+        token: session.token,
+        tokenExpiresAt: session.tokenExpiresAt,
+        keyEpoch: session.keyEpoch,
+        authGeneration: session.authGeneration,
+        sessionGeneration: session.sessionGeneration,
+        userId: userId,
+        loginName: session.loginName,
+        displayName: session.displayName,
+        role: session.role,
+        attachmentQuotaBytes: session.attachmentQuotaBytes,
+        deviceId: session.deviceId,
+        deviceName: session.deviceName,
+        platform: session.platform,
+        clientVersion: session.clientVersion,
+        deviceKeyVersion: session.deviceKeyVersion,
+        deviceCreatedAt: session.deviceCreatedAt,
+      ).accountScope,
+    );
+    expect(prepared.workspaceKey, workspaceKey);
+    expect(
+      p.normalize(prepared.dataDirectory.path),
+      p.normalize(
+        p.join(
+          installationRoot.path,
+          '.kelivo-workspaces',
+          'accounts',
+          workspaceKey,
+          'data',
+        ),
+      ),
+    );
+    expect(await prepared.dataDirectory.exists(), isTrue);
+    await lease.close();
+    expect(() => lease.context, throwsA(isA<StateError>()));
+  });
+
+  test('恢复重复准备同一目标时保持目录与已有数据不变', () async {
+    const userId = '00000000-0000-4000-8000-000000000002';
+    final runtime = await bootstrap();
+    final firstLease = await runtime.prepareAccountWorkspace(
+      canonicalBaseUrl: defaultCloudSyncBaseUrl,
+      userId: userId,
+    );
+    final first = firstLease.context;
+    final marker = File(p.join(first.dataDirectory.path, 'recovery-stage'));
+    await marker.writeAsString('prepared', flush: true);
+
+    await expectLater(
+      runtime.prepareAccountWorkspace(
+        canonicalBaseUrl: defaultCloudSyncBaseUrl,
+        userId: userId,
+      ),
+      throwsA(isA<StateError>()),
+    );
+    await firstLease.close();
+    await firstLease.close();
+    final secondLease = await runtime.prepareAccountWorkspace(
+      canonicalBaseUrl: defaultCloudSyncBaseUrl,
+      userId: userId,
+    );
+    final second = secondLease.context;
+
+    expect(second.workspaceKey, first.workspaceKey);
+    expect(
+      p.normalize(second.dataDirectory.path),
+      p.normalize(first.dataDirectory.path),
+    );
+    expect(second.accountScope, first.accountScope);
+    expect(await marker.readAsString(), 'prepared');
+    final accountEntries = await first.dataDirectory.parent
+        .list(followLinks: false)
+        .map((entity) => p.basename(entity.path))
+        .toList();
+    expect(accountEntries, <String>['data']);
+    await secondLease.close();
+  });
+
+  test('恢复准备其他目标时不改变当前账号与耐久注册表', () async {
+    var runtime = await bootstrap();
+    final activeSession = _session(
+      userId: 'active-account',
+      token: 'active-account-token',
+    );
+    await runtime.bindAccount(activeSession);
+    await close(runtime);
+    runtime = await bootstrap();
+    final activeWorkspaceKey = runtime.current.workspaceKey;
+    final activeDataDirectory = runtime.current.dataDirectory.path;
+    final workspaceRoot = Directory(
+      p.join(installationRoot.path, '.kelivo-workspaces'),
+    );
+
+    Future<Map<String, String>> registrySnapshot() async {
+      final files = await workspaceRoot
+          .list(followLinks: false)
+          .where(
+            (entity) =>
+                entity is File &&
+                p.basename(entity.path).startsWith('registry-v1-'),
+          )
+          .cast<File>()
+          .toList();
+      files.sort((left, right) => left.path.compareTo(right.path));
+      final snapshot = <String, String>{};
+      for (final file in files) {
+        snapshot[p.basename(file.path)] = await file.readAsString();
+      }
+      return snapshot;
+    }
+
+    final registryBefore = await registrySnapshot();
+    final lease = await runtime.prepareAccountWorkspace(
+      canonicalBaseUrl: defaultCloudSyncBaseUrl,
+      userId: '00000000-0000-4000-8000-000000000003',
+    );
+
+    expect(runtime.current.workspaceKey, activeWorkspaceKey);
+    expect(runtime.current.dataDirectory.path, activeDataDirectory);
+    expect(runtime.current.session?.token.value, activeSession.token.value);
+    expect(await registrySnapshot(), registryBefore);
+    var persistentLogsRetired = false;
+    await expectLater(
+      runtime.discardPlaintextLocalState(
+        retirePersistentLogs: () async {
+          persistentLogsRetired = true;
+        },
+      ),
+      throwsA(isA<StateError>()),
+    );
+    expect(persistentLogsRetired, isFalse);
+    expect(
+      await runtime.registeredPreferencesPrefixes(),
+      contains('kelivo.account.${lease.context.workspaceKey}.'),
+    );
+    await expectLater(runtime.signOut(), throwsA(isA<StateError>()));
+    await expectLater(
+      runtime.bindAccount(
+        _session(userId: 'other-account', token: 'other-account-token'),
+      ),
+      throwsA(isA<StateError>()),
+    );
+    await expectLater(runtime.close(), throwsA(isA<StateError>()));
+
+    await lease.close();
+    await close(runtime);
+    runtime = await bootstrap();
+    expect(runtime.current.workspaceKey, activeWorkspaceKey);
+    expect(runtime.current.dataDirectory.path, activeDataDirectory);
+    expect(runtime.current.session?.token.value, activeSession.token.value);
+  });
+
+  test('恢复准备在首个异步等待前占位并阻止账户绑定', () async {
+    final runtime = await bootstrap();
+    final preparation = runtime.prepareAccountWorkspace(
+      canonicalBaseUrl: defaultCloudSyncBaseUrl,
+      userId: '00000000-0000-4000-8000-000000000005',
+    );
+
+    await expectLater(
+      runtime.bindAccount(
+        _session(userId: 'racing-account', token: 'racing-account-token'),
+      ),
+      throwsA(isA<StateError>()),
+    );
+    await expectLater(runtime.close(), throwsA(isA<StateError>()));
+
+    final lease = await preparation;
+    await lease.close();
+    expect(
+      await runtime.bindAccount(
+        _session(userId: 'racing-account', token: 'racing-account-token'),
+      ),
+      isA<AccountWorkspaceRestartRequired>(),
+    );
+  });
+
+  test('明文退役进行中拒绝恢复准备且异常后释放占位', () async {
+    final runtime = await bootstrap();
+    final retirementEntered = Completer<void>();
+    final releaseRetirement = Completer<void>();
+    final retirementFailure = StateError('persistent_log_retirement_failed');
+    final retirement = runtime.discardPlaintextLocalState(
+      retirePersistentLogs: () async {
+        retirementEntered.complete();
+        await releaseRetirement.future;
+        throw retirementFailure;
+      },
+    );
+    await retirementEntered.future;
+
+    await expectLater(
+      runtime.prepareAccountWorkspace(
+        canonicalBaseUrl: defaultCloudSyncBaseUrl,
+        userId: '00000000-0000-4000-8000-000000000007',
+      ),
+      throwsA(isA<StateError>()),
+    );
+    await expectLater(
+      runtime.registeredPreferencesPrefixes(),
+      throwsA(isA<StateError>()),
+    );
+
+    final retirementResult = expectLater(
+      retirement,
+      throwsA(same(retirementFailure)),
+    );
+    releaseRetirement.complete();
+    await retirementResult;
+
+    final lease = await runtime.prepareAccountWorkspace(
+      canonicalBaseUrl: defaultCloudSyncBaseUrl,
+      userId: '00000000-0000-4000-8000-000000000007',
+    );
+    await lease.close();
+  });
+
+  test('恢复准备拒绝非规范身份且失败前不创建账号目录', () async {
+    final runtime = await bootstrap();
+    const invalidIdentities = <({String baseUrl, String userId})>[
+      (
+        baseUrl: 'https://kelivo.bemylover.top/',
+        userId: '00000000-0000-4000-8000-000000000004',
+      ),
+      (baseUrl: defaultCloudSyncBaseUrl, userId: 'not-a-uuid'),
+      (
+        baseUrl: defaultCloudSyncBaseUrl,
+        userId: '00000000-0000-4000-8000-00000000000A',
+      ),
+    ];
+
+    for (final identity in invalidIdentities) {
+      await expectLater(
+        runtime.prepareAccountWorkspace(
+          canonicalBaseUrl: identity.baseUrl,
+          userId: identity.userId,
+        ),
+        throwsA(isA<FormatException>()),
+      );
+    }
+
+    expect(
+      await Directory(
+        p.join(installationRoot.path, '.kelivo-workspaces', 'accounts'),
+      ).exists(),
+      isFalse,
+    );
+
+    final accountsPath = p.join(
+      installationRoot.path,
+      '.kelivo-workspaces',
+      'accounts',
+    );
+    final blockingFile = File(accountsPath);
+    await blockingFile.writeAsString('blocked', flush: true);
+    await expectLater(
+      runtime.prepareAccountWorkspace(
+        canonicalBaseUrl: defaultCloudSyncBaseUrl,
+        userId: '00000000-0000-4000-8000-000000000006',
+      ),
+      throwsA(isA<StateError>()),
+    );
+    await blockingFile.delete();
+    final lease = await runtime.prepareAccountWorkspace(
+      canonicalBaseUrl: defaultCloudSyncBaseUrl,
+      userId: '00000000-0000-4000-8000-000000000006',
+    );
+    await lease.close();
+  });
+
   test('匿名 LocalVault 与账号 A/B 的路径和配置前缀互不重叠', () async {
     var runtime = await bootstrap();
     final localDataDirectory = p.join(

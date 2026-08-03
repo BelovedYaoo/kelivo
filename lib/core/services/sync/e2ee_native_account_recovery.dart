@@ -12,11 +12,13 @@ final class E2eeNativeAccountRecoveryProofCore
     required KelivoDeviceIdentityHandle deviceIdentity,
     required int deviceKeyVersion,
     required int targetAuthGeneration,
+    void Function(E2eeAccountRecoveryKeyLease lease)? onKeyLeaseCloseFailure,
   }) : this._(
          secureCore,
          deviceIdentity,
          deviceKeyVersion,
          targetAuthGeneration,
+         onKeyLeaseCloseFailure,
        );
 
   const E2eeNativeAccountRecoveryProofCore._(
@@ -24,12 +26,15 @@ final class E2eeNativeAccountRecoveryProofCore
     this._deviceIdentity,
     this._deviceKeyVersion,
     this._targetAuthGeneration,
+    this._onKeyLeaseCloseFailure,
   );
 
   final KelivoSecureCore _secureCore;
   final KelivoDeviceIdentityHandle _deviceIdentity;
   final int _deviceKeyVersion;
   final int _targetAuthGeneration;
+  final void Function(E2eeAccountRecoveryKeyLease lease)?
+  _onKeyLeaseCloseFailure;
 
   @override
   Future<E2eeAccountRecoveryProof> verifyHistoryAndCreateProof({
@@ -47,8 +52,10 @@ final class E2eeNativeAccountRecoveryProofCore
     required Uint8List expectedRequestDigest,
     required DateTime expectedExpiresAt,
   }) async {
+    KelivoAccountRecoveryProof? nativeProof;
+    var retainExecution = false;
     try {
-      final nativeProof = await _secureCore.verifyAccountRecoveryAndCreateProof(
+      nativeProof = await _secureCore.verifyAccountRecoveryAndCreateProof(
         _deviceIdentity,
         expectedDeviceKeyVersion: _deviceKeyVersion,
         expectedDeviceAuthGeneration: _targetAuthGeneration,
@@ -72,16 +79,19 @@ final class E2eeNativeAccountRecoveryProofCore
         expectedRequestDigest: expectedRequestDigest,
         expectedExpiresAt: expectedExpiresAt,
       );
-      return E2eeAccountRecoveryProof(
-        keyLease: E2eeNativeAccountRecoveryKeyLease._(
-          secureCore: _secureCore,
-          execution: nativeProof.execution,
-        ),
+      final lease = _createKeyLease(nativeProof.execution);
+      final proof = E2eeAccountRecoveryProof(
+        keyLease: lease,
         nonceProof: nativeProof.nonceProof,
         trustSignature: nativeProof.trustSignature,
       );
+      retainExecution = true;
+      return proof;
     } finally {
       recoveryPassphrase.fillRange(0, recoveryPassphrase.length, 0);
+      if (nativeProof != null && !retainExecution) {
+        await _createKeyLease(nativeProof.execution).close();
+      }
     }
   }
 
@@ -177,38 +187,52 @@ final class E2eeNativeAccountRecoveryProofCore
           execution.sourceDataKeyEpoch != challenge.dataKeyEpoch) {
         throw const FormatException('账户恢复 Native 替换证明未绑定服务端 challenge');
       }
-      retainExecution = true;
-      return E2eeAccountRecoveryProof(
-        keyLease: E2eeNativeAccountRecoveryKeyLease._(
-          secureCore: _secureCore,
-          execution: execution,
-        ),
+      final lease = _createKeyLease(execution);
+      final proof = E2eeAccountRecoveryProof(
+        keyLease: lease,
         nonceProof: nativeProof.nonceProof,
         trustSignature: nativeProof.trustSignature,
       );
+      retainExecution = true;
+      return proof;
     } finally {
       recoveryPassphrase.fillRange(0, recoveryPassphrase.length, 0);
       if (nativeProof != null && !retainExecution) {
-        await _secureCore.closeAccountRecoveryExecution(nativeProof.execution);
+        await _createKeyLease(nativeProof.execution).close();
       }
     }
+  }
+
+  E2eeNativeAccountRecoveryKeyLease _createKeyLease(
+    KelivoAccountRecoveryExecution execution,
+  ) {
+    return E2eeNativeAccountRecoveryKeyLease._(
+      secureCore: _secureCore,
+      execution: execution,
+      onCloseFailure: _onKeyLeaseCloseFailure,
+    );
   }
 }
 
 final class E2eeNativeAccountRecoveryKeyLease
     implements E2eeAccountRecoveryKeyLease {
-  const E2eeNativeAccountRecoveryKeyLease._({
+  E2eeNativeAccountRecoveryKeyLease._({
     required KelivoSecureCore secureCore,
     required KelivoAccountRecoveryExecution execution,
-  }) : this._fromFields(secureCore, execution);
+    required void Function(E2eeAccountRecoveryKeyLease lease)? onCloseFailure,
+  }) : this._fromFields(secureCore, execution, onCloseFailure);
 
-  const E2eeNativeAccountRecoveryKeyLease._fromFields(
+  E2eeNativeAccountRecoveryKeyLease._fromFields(
     this._secureCore,
     this._execution,
+    this._onCloseFailure,
   );
 
   final KelivoSecureCore _secureCore;
   final KelivoAccountRecoveryExecution _execution;
+  final void Function(E2eeAccountRecoveryKeyLease lease)? _onCloseFailure;
+  Future<void>? _closeFuture;
+  bool _closed = false;
 
   @override
   int get keyEpoch => _execution.keyEpoch;
@@ -243,8 +267,39 @@ final class E2eeNativeAccountRecoveryKeyLease
     );
   }
 
+  Future<KelivoPreparedAccountRecoveryDeviceStates> prepareDeviceStates({
+    required KelivoKeyHandle key,
+    required KelivoPreparedAccountRecoveryCommit prepared,
+  }) {
+    return _secureCore.prepareAccountRecoveryDeviceStates(
+      _execution,
+      key,
+      prepared,
+    );
+  }
+
   @override
-  Future<void> close() => _secureCore.closeAccountRecoveryExecution(_execution);
+  Future<void> close() {
+    if (_closed) return Future<void>.value();
+    final existing = _closeFuture;
+    if (existing != null) return existing;
+    late final Future<void> closing;
+    closing = _close().whenComplete(() {
+      if (identical(_closeFuture, closing)) _closeFuture = null;
+    });
+    _closeFuture = closing;
+    return closing;
+  }
+
+  Future<void> _close() async {
+    try {
+      await _secureCore.closeAccountRecoveryExecution(_execution);
+      _closed = true;
+    } catch (_) {
+      _onCloseFailure?.call(this);
+      rethrow;
+    }
+  }
 }
 
 Uint8List _canonicalRecoveryUuidBytes(String value, String field) {

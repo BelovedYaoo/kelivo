@@ -152,6 +152,8 @@ final class E2eeDataRekeyReadyConfirmation {
   const E2eeDataRekeyReadyConfirmation._(this.execution);
 
   final E2eeDataRekeyFinalizedExecution execution;
+
+  CloudSyncDataRekeyCompletion get completion => execution.result.completion;
 }
 
 final class E2eeDataRekeyExecutor {

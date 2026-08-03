@@ -36,6 +36,9 @@ import 'core/database/sqlcipher_database_key.dart';
 import 'core/services/chat/chat_service.dart';
 import 'core/services/sync/cloud_sync_client.dart';
 import 'core/services/sync/cloud_sync_types.dart';
+import 'core/services/sync/e2ee_account_authenticator.dart';
+import 'core/services/sync/e2ee_account_recovery_production_runner.dart';
+import 'core/services/sync/e2ee_account_recovery_runner.dart';
 import 'core/services/sync/e2ee_chat_content_runtime.dart';
 import 'core/services/sync/e2ee_config_provider_binding.dart';
 import 'core/services/sync/e2ee_device_pairing_membership_commit.dart';
@@ -86,6 +89,8 @@ bool _didCheckUpdates = false; // one-time update check flag
 final AssistantDefaultsBootstrap _assistantDefaultsBootstrap =
     AssistantDefaultsBootstrap();
 bool _didInitializeLocalizedDefaults = false;
+E2eeAccountRecoveryRunner? _pendingRestartedAccountRecoveryRunner;
+CloudSyncClient? _pendingRestartedAccountRecoveryClient;
 
 final class AssistantDefaultsBootstrap {
   AssistantDefaultsBootstrap({this.retryDelay = const Duration(seconds: 2)})
@@ -346,6 +351,18 @@ Future<void> main() async {
         );
         return;
       }
+      try {
+        await _finalizeRestartedAccountRecovery(workspaceRuntime);
+      } catch (error) {
+        stderr.writeln('[AccountRecoveryFinalization] failed');
+        await _initRestoreFailureWindow();
+        runApp(
+          _RestoreFailureApp(
+            diagnosticCode: restoreFailureDiagnosticCode(error),
+          ),
+        );
+        return;
+      }
       // Enable edge-to-edge to allow content under system bars (Android)
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
       final chatContentRuntime = _createE2eeChatContentRuntime(
@@ -403,6 +420,87 @@ File _currentAccountDatabaseFile(AccountWorkspaceRuntime workspaceRuntime) =>
       '${workspaceRuntime.current.dataDirectory.path}'
       '${Platform.pathSeparator}${AppDatabase.databaseFileName}',
     );
+
+Future<void> _finalizeRestartedAccountRecovery(
+  AccountWorkspaceRuntime workspaceRuntime,
+) async {
+  if (kIsWeb ||
+      (defaultTargetPlatform != TargetPlatform.android &&
+          defaultTargetPlatform != TargetPlatform.iOS) ||
+      workspaceRuntime.current.session == null) {
+    return;
+  }
+  if (_pendingRestartedAccountRecoveryRunner != null ||
+      _pendingRestartedAccountRecoveryClient != null) {
+    throw StateError('account_recovery_startup_cleanup_pending');
+  }
+  final session = workspaceRuntime.current.session!;
+  final client = CloudSyncClient(token: session.token);
+  final deviceStateStore = DeviceStateBlobStore(
+    installationRoot: workspaceRuntime.installationRoot,
+  );
+  late final E2eeAccountRecoveryProductionRunner runner;
+  try {
+    runner = E2eeAccountRecoveryProductionRunner(
+      client: client,
+      authentication: E2eeAccountAuthenticator(
+        baseUrl: defaultCloudSyncBaseUrl,
+        accountClient: client,
+        deviceStateStore: deviceStateStore,
+        secureCore: const KelivoSecureCore(),
+      ),
+      workspaceRuntime: workspaceRuntime,
+      deviceStateStore: deviceStateStore,
+    );
+  } catch (_) {
+    client.close(force: true);
+    rethrow;
+  }
+  _pendingRestartedAccountRecoveryRunner = runner;
+  _pendingRestartedAccountRecoveryClient = client;
+  Object? primaryError;
+  try {
+    await runner.finalizeRestartedWorkspace();
+  } catch (error) {
+    primaryError = error;
+    rethrow;
+  } finally {
+    try {
+      await _closeRestartedAccountRecoveryRunner(runner);
+      if (identical(_pendingRestartedAccountRecoveryRunner, runner)) {
+        _pendingRestartedAccountRecoveryRunner = null;
+      }
+      if (identical(_pendingRestartedAccountRecoveryClient, client)) {
+        _pendingRestartedAccountRecoveryClient = null;
+      }
+      client.close(force: true);
+    } catch (error, stackTrace) {
+      if (primaryError == null) {
+        Error.throwWithStackTrace(error, stackTrace);
+      }
+      stderr.writeln('[AccountRecoveryFinalizationCleanup] failed');
+    }
+  }
+}
+
+Future<void> _closeRestartedAccountRecoveryRunner(
+  E2eeAccountRecoveryRunner runner,
+) async {
+  Object? firstError;
+  StackTrace? firstStackTrace;
+  // 启动门禁只重试确定幂等的 close；仍失败时由顶层字段持有 owner，
+  // 失败页触发的进程重启会成为最后的资源边界。
+  for (var attempt = 0; attempt < 2; attempt++) {
+    try {
+      await runner.close();
+      return;
+    } catch (error, stackTrace) {
+      firstError ??= error;
+      firstStackTrace ??= stackTrace;
+    }
+  }
+  Error.throwWithStackTrace(firstError!, firstStackTrace!);
+}
 
 Future<void> _initRestoreFailureWindow() async {
   if (kIsWeb) return;
@@ -536,6 +634,29 @@ class MyApp extends StatelessWidget {
     final chatSyncWriteExecutor = chatContentRuntime ?? localSyncWriteExecutor;
     final SyncWriteExecutor configSyncWriteExecutor =
         chatContentRuntime ?? localSyncWriteExecutor;
+    final E2eeAccountRecoveryRunnerFactory? accountRecoveryRunnerFactory =
+        !kIsWeb &&
+            (defaultTargetPlatform == TargetPlatform.android ||
+                defaultTargetPlatform == TargetPlatform.iOS)
+        ? ({required accountClient, required authentication}) {
+            if (accountClient is! E2eeAccountRecoveryClient) {
+              throw StateError('账户恢复生产依赖不完整');
+            }
+            if (authentication is! E2eeAccountRecoveryAuthentication) {
+              throw StateError('账户恢复生产依赖不完整');
+            }
+            final recoveryAuthentication =
+                authentication as E2eeAccountRecoveryAuthentication;
+            return E2eeAccountRecoveryProductionRunner(
+              client: accountClient,
+              authentication: recoveryAuthentication,
+              workspaceRuntime: workspaceRuntime,
+              deviceStateStore: DeviceStateBlobStore(
+                installationRoot: workspaceRuntime.installationRoot,
+              ),
+            );
+          }
+        : null;
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => ChatProvider()),
@@ -639,6 +760,7 @@ class MyApp extends StatelessWidget {
                     localCryptographicWipe: localCryptographicWipe,
                     installationOperationLease: installationOperationLease,
                     installationBusinessLease: installationBusinessLease,
+                    accountRecoveryRunnerFactory: accountRecoveryRunnerFactory,
                     stopBackgroundSync: () =>
                         mobileBackgroundSyncScheduler.setEnabled(false),
                     restartForLocalDeviceWipe: PlatformUtils.restartApp,
@@ -656,6 +778,7 @@ class MyApp extends StatelessWidget {
                     localCryptographicWipe: localCryptographicWipe,
                     installationOperationLease: installationOperationLease,
                     installationBusinessLease: installationBusinessLease,
+                    accountRecoveryRunnerFactory: accountRecoveryRunnerFactory,
                     stopBackgroundSync: () =>
                         mobileBackgroundSyncScheduler.setEnabled(false),
                     restartForLocalDeviceWipe: PlatformUtils.restartApp,

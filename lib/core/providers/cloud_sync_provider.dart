@@ -234,6 +234,8 @@ final class CloudSyncProvider extends ChangeNotifier
   E2eeAccountLoginApprovalRequired? _pendingDeviceApproval;
   E2eeDevicePairingSession? _pendingPairingSession;
   CloudSyncAccountClient? _pendingPairingClient;
+  E2eeAccountRecoveryRunner? _pendingAccountRecoveryRunner;
+  CloudSyncAccountClient? _pendingAccountRecoveryClient;
   Uint8List? _pendingPairingQrFrame;
   Future<void>? _pendingPairingTask;
   List<CloudSyncDeviceSession> _devices = const <CloudSyncDeviceSession>[];
@@ -293,7 +295,8 @@ final class CloudSyncProvider extends ChangeNotifier
       _stopBackgroundSync != null &&
       _restartForLocalDeviceWipe != null;
   bool get devicesLoading => _devicesLoading;
-  bool get _sessionMutationInProgress => _sessionMutation != null;
+  bool get _sessionMutationInProgress =>
+      _sessionMutation != null || _pendingAccountRecoveryRunner != null;
 
   Future<void> initialize() {
     if (_ready) return Future<void>.value();
@@ -483,9 +486,11 @@ final class CloudSyncProvider extends ChangeNotifier
   Future<bool> startAccountRecovery(E2eeAccountRecoveryCommand command) async {
     E2eeAccountRecoveryRunner? runner;
     CloudSyncAccountClient? recoveryClient;
+    CloudSyncAccountSession? boundSession;
     Object? failure;
     var completed = false;
     var mutationStarted = false;
+    var workspaceAcknowledged = false;
     try {
       await initialize();
       if (!_ready || _disposed || _localDeviceWipePending) return false;
@@ -529,6 +534,8 @@ final class CloudSyncProvider extends ChangeNotifier
         accountClient: recoveryClient,
         authentication: authentication,
       );
+      _pendingAccountRecoveryRunner = runner;
+      _pendingAccountRecoveryClient = recoveryClient;
       final platform = _currentPlatform();
       final authenticatedSession = await command.use(
         (input) => runner!.recover(
@@ -538,26 +545,22 @@ final class CloudSyncProvider extends ChangeNotifier
           onProgress: _advanceAccountRecoveryProgress,
         ),
       );
-      await runner.close();
-      runner = null;
       if (_disposed) return false;
       _advanceAccountRecoveryProgress(E2eeAccountRecoveryProgress.completing);
-      final connected = await _bindAuthenticatedSession(
-        authenticatedSession,
-        recoveryClient,
-      );
-      if (connected) {
-        recoveryClient = null;
-      }
-      _accountRecoveryProgress = E2eeAccountRecoveryProgress.completed;
-      completed = true;
-      _notify();
+      boundSession = await _bindAuthenticatedWorkspace(authenticatedSession);
+      if (boundSession == null) return false;
+      await runner.acknowledgeWorkspaceBound();
+      workspaceAcknowledged = true;
     } catch (error) {
       failure = error;
     } finally {
       command.dispose();
       try {
-        await runner?.close();
+        final activeRunner = runner;
+        if (activeRunner != null) {
+          await _closeAccountRecoveryRunner(activeRunner);
+          runner = null;
+        }
       } catch (error) {
         if (failure == null) {
           failure = error;
@@ -565,19 +568,63 @@ final class CloudSyncProvider extends ChangeNotifier
           debugPrint('CLOUD_SYNC_ACCOUNT_RECOVERY_RUNNER_CLEANUP_FAILED');
         }
       }
-      recoveryClient?.close(force: true);
+      if (runner == null) {
+        if (identical(_pendingAccountRecoveryClient, recoveryClient)) {
+          _pendingAccountRecoveryClient = null;
+        }
+        if (failure != null || !workspaceAcknowledged || _disposed) {
+          recoveryClient?.close(force: true);
+          recoveryClient = null;
+        }
+      }
       if (mutationStarted) _endSessionMutation();
     }
 
     if (failure != null) {
       _accountRecoveryProgress = E2eeAccountRecoveryProgress.failed;
       _lastError = _normalizeFailure(failure);
-      _status = CloudSyncProviderStatus.signedOut;
+      if (workspaceAcknowledged || _pendingAccountRecoveryRunner != null) {
+        _workspaceRestartRequired = true;
+        _status = CloudSyncProviderStatus.workspaceChangePending;
+      } else {
+        _status = CloudSyncProviderStatus.signedOut;
+      }
       debugPrint('CLOUD_SYNC_ACCOUNT_RECOVERY_FAILED');
       _notify();
       return false;
     }
+    if (workspaceAcknowledged &&
+        boundSession != null &&
+        recoveryClient != null) {
+      _activateAuthenticatedSession(boundSession, recoveryClient);
+      recoveryClient = null;
+      _accountRecoveryProgress = E2eeAccountRecoveryProgress.completed;
+      completed = true;
+      _notify();
+    }
     return completed;
+  }
+
+  Future<void> _closeAccountRecoveryRunner(
+    E2eeAccountRecoveryRunner runner,
+  ) async {
+    Object? firstError;
+    StackTrace? firstStackTrace;
+    // close 是幂等的资源收口点；立即重试一次可吸收瞬态文件锁，
+    // 连续失败则保留字段所有权，等待进程重启释放原生资源。
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        await runner.close();
+        if (identical(_pendingAccountRecoveryRunner, runner)) {
+          _pendingAccountRecoveryRunner = null;
+        }
+        return;
+      } catch (error, stackTrace) {
+        firstError ??= error;
+        firstStackTrace ??= stackTrace;
+      }
+    }
+    Error.throwWithStackTrace(firstError!, firstStackTrace!);
   }
 
   void _advanceAccountRecoveryProgress(E2eeAccountRecoveryProgress progress) {
@@ -854,6 +901,9 @@ final class CloudSyncProvider extends ChangeNotifier
     _sessionEpoch++;
     _client?.close(force: true);
     _client = null;
+    // pending 恢复 owner 表示幂等 close 已连续失败；再次请求工作区
+    // 优雅交接只会被同一租约阻塞，应由移动端进程重启边界统一释放。
+    if (_pendingAccountRecoveryRunner != null) return;
     Object? primaryError;
     StackTrace? primaryStackTrace;
     try {
@@ -1475,6 +1525,15 @@ final class CloudSyncProvider extends ChangeNotifier
     CloudSyncAuthenticatedSession authenticatedSession,
     CloudSyncAccountClient client,
   ) async {
+    final session = await _bindAuthenticatedWorkspace(authenticatedSession);
+    if (session == null) return false;
+    _activateAuthenticatedSession(session, client);
+    return true;
+  }
+
+  Future<CloudSyncAccountSession?> _bindAuthenticatedWorkspace(
+    CloudSyncAuthenticatedSession authenticatedSession,
+  ) async {
     final session = CloudSyncAccountSession.fromAuthenticatedSession(
       baseUrl: defaultCloudSyncBaseUrl,
       session: authenticatedSession,
@@ -1484,14 +1543,19 @@ final class CloudSyncProvider extends ChangeNotifier
         session.securityBootstrap != null) {
       _workspaceRestartRequired = true;
       _setStatus(CloudSyncProviderStatus.workspaceChangePending);
-      return false;
+      return null;
     }
+    return session;
+  }
 
+  void _activateAuthenticatedSession(
+    CloudSyncAccountSession session,
+    CloudSyncAccountClient client,
+  ) {
     _workspaceRestartRequired = false;
     _session = session;
     _connect(session, client: client);
     if (!_disposed) _setStatus(CloudSyncProviderStatus.idle);
-    return true;
   }
 
   static void _clearMutableBytes(Uint8List? value) {
