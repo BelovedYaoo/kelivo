@@ -60,6 +60,18 @@ android {
         versionName = flutter.versionName
     }
 
+    // 当前发布目标只有 ARM64 真机。flutter 插件会把 abiFilters 重置为全 ABI，
+    // 且 variant 创建后修改 ABI 不生效；用打包排除直接丢弃非 arm64 的 so。
+    packaging {
+        jniLibs {
+            excludes += listOf(
+                "lib/armeabi-v7a/**",
+                "lib/x86/**",
+                "lib/x86_64/**",
+            )
+        }
+    }
+
     signingConfigs {
         create("release") {
             keystoreProperties?.getProperty("storeFile")?.trim()?.takeIf(String::isNotEmpty)?.let {
