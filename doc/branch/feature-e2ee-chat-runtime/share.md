@@ -128,3 +128,14 @@
 - 验证环境修复：rustup 渠道同步走 rsproxy 镜像（hook 透传），Flutter 测试在 Windows 不再卡死。
 - 2026-08-06 远端灾备完成：配置本机 7890 代理后推送客户端 145 个提交（75b0342a..24f8205a）与服务端 35 个提交（4f57042..d0f492b）；gh token 已含 workflow scope（推送含 workflow 文件修改必须）。
 - 2026-08-06 最终收敛：main 快进到集成主线（a02d29ac）并推送；feature/e2ee-chat-runtime 本地与远端分支删除；远端 fork 复制的 14 个分支（beta/hive2sql/pagination 等）全部删除，仅保留 origin/main；两个孤儿 worktree 目录（onboarding/ci-gates）确认是不完整拷贝后清理；全部 worktree 收敛到主仓库。本地分支仅 main + upstream-main。
+- 2026-08-06 安全缺口实现（代码级全部完成）：
+  - #108 OPAQUE 凭据失败统一映射未认证（错误密码/不存在账号同码，防枚举）；安全槽回归测试通过
+  - #100 全局代理迁入 E2EE Vault（global-proxy 单例 + payload schema + 退役）；MCP 本地 stdio/inmemory 服务器 env 用安全槽密封存储并自动迁移旧明文；加密测试通过（安全槽域）
+  - #102 退役清单补齐 6 Provider 11 个明文镜像键（测试全等断言同步）
+  - #105 Android allowBackup=false + dataExtractionRules（待真机构建验证）
+  - #107 E2eeAccountKeyLease 关闭失败恢复所有权可重试（失败注入不可自动化，代码审查验证）
+  - #109 复核确认已修复（operationId=attemptId + 发网前复核测试存在），可关闭
+  - 撤销编排补 RecoveryReplacementRequired 分支测试（content_gate 139 项通过）；Prepared 分支需安全槽域完整成员锚构造，列入验收项
+  - 工程：#97 protocol rustfmt 通过、#93 构建产物/依赖缓存退出跟踪；#63 actionlint 本机工具不可用（下载 403），待工具就绪
+- 验证：dart analyze 0 error；核心套件 206 项通过（唯一跳过=安全槽"生产 runner 推进成员锚"）；安全槽基线（checkpoint 5 + OPAQUE + MCP 加密）通过
+- 验收验证边界（需真机/运行时）：Android manifest 备份禁用真机构建、MCP 加密真实应用读写、global-proxy 第二设备同步水合、OPAQUE 登录 UI 交互
