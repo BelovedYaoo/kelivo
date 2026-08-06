@@ -121,3 +121,6 @@
 - 已完成 #111 异常退出恢复：E2EE 冷启动不再与未就绪的自身运行时互等；调度器启动前会将遗留流式草稿标记为中断，把助手正文与 MCP 本地图片物化为受管附件，并与消息、工具事件和 outbox 原子提交。
 - 下一步 #111：字体是否纳入同步仍需产品决定。
 - 已完成 #101：当前模型、标题/翻译/OCR/摘要/建议/压缩模型及七类生成提示词已硬切为 `generation-settings:default` E2EE Vault 单例；旧明文偏好在所有工作区耐久清退，消息构建不再回退旧指令 Store。SQLCipher schema 27、远端更新/墓碑、缺省值、事务回滚、损坏载荷、生产 outbox 与本地模式回归均已验证。
+- 2026-08-06 分支收敛：仓库已从 D 盘整体迁移到 E 盘，5 个 worktree 双向路径引用断裂后已修复。审查并提交两个脏 worktree 的未提交工作（备份导入 E2EE 意图管线 +1516 行、设备自撤销生产运行时 +2367 行），分别以 `478f4c45`、`370bbfe2` 合入主线。已删除分支：`feature/e2ee-recovery-production-wiring`、`feature/e2ee-recovery-reopen-lease`、`feature/e2ee-recovery-workspace-preparation`、`fix/e2ee-plaintext-path-race`（三个非等价提交已逐一验证被主线吸收）、`master`、`feature/e2ee-import-outbox`、`feature/e2ee-self-revocation-runtime-wiring`。保留 `main`、`upstream-main`。
+- 构建修复：安全核心 hook 显式透传 rustup 镜像（rsproxy），解决官方源不可达时构建卡死；移动端后台执行器补齐 `securityStateChanged` 枚举分支。
+- 遗留：`_worktrees/kelivo-recovery-onboarding`、`kelivo-e2ee-ci-gates` 为无注册无分支的孤儿目录（疑似 8/3 清理遗留），待确认后删除；GitHub 直连不通，131+ 提交未推送；`feature/e2ee-chat-runtime` 尚未合入 `main`（P0 验证 gate 未满足）。
