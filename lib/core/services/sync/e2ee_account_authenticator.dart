@@ -10,6 +10,7 @@ import 'package:uuid/uuid.dart';
 import '../workspace/device_state_blob_store.dart';
 import 'cloud_sync_client.dart';
 import 'cloud_sync_pairing_qr_codec.dart';
+import 'sensitive_utf8.dart';
 import 'cloud_sync_types.dart';
 import 'e2ee_account_recovery.dart';
 import 'e2ee_account_recovery_runner.dart';
@@ -846,12 +847,27 @@ final class E2eeAccountAuthenticator
       final opaqueAccountBinding = _uuidBytes(start.accountBinding);
 
       opaqueStateActive = false;
-      credentialFinalization = await _secureCore.finishOpaqueLogin(
-        opaqueStart.state,
-        password: passwordCopy,
-        response: start.credentialResponse,
-        accountId: opaqueAccountBinding,
-      );
+      try {
+        credentialFinalization = await _secureCore.finishOpaqueLogin(
+          opaqueStart.state,
+          password: passwordCopy,
+          response: start.credentialResponse,
+          accountId: opaqueAccountBinding,
+        );
+      } on KelivoSecureCoreException catch (error) {
+        // 不存在的账号会拿到服务端伪凭据响应，错误密码会拿到无效密文；
+        // 两者在本地 OPAQUE 计算阶段都表现为协议失败。统一映射为未认证，
+        // 不区分账号是否存在，避免向登录界面泄漏账号存在性。
+        if (error.status == KelivoSecureCoreStatus.opaqueProtocolFailed ||
+            error.status == KelivoSecureCoreStatus.opaqueMessageInvalid) {
+          throw const CloudSyncException(
+            kind: CloudSyncFailureKind.unauthenticated,
+            retryable: false,
+            serverCode: e2eeOpaqueAuthenticationFailedCode,
+          );
+        }
+        rethrow;
+      }
       deviceProof = Uint8List.fromList(
         await _secureCore.signDeviceLoginProof(
           context.identity,

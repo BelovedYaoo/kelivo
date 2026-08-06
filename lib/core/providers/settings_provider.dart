@@ -65,6 +65,26 @@ final class GenerationModelSelection {
   final String modelId;
 }
 
+final class GlobalProxySnapshot {
+  const GlobalProxySnapshot({
+    required this.enabled,
+    required this.type,
+    required this.host,
+    required this.port,
+    required this.username,
+    required this.password,
+    required this.bypass,
+  });
+
+  final bool enabled;
+  final String type;
+  final String host;
+  final String port;
+  final String username;
+  final String password;
+  final String bypass;
+}
+
 final class GenerationSettingsSnapshot {
   const GenerationSettingsSnapshot({
     required this.currentModel,
@@ -756,6 +776,43 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
     _publishGenerationSettings(snapshot);
   }
 
+  GlobalProxySnapshot get globalProxySnapshot => GlobalProxySnapshot(
+        enabled: _globalProxyEnabled,
+        type: _globalProxyType,
+        host: _globalProxyHost,
+        port: _globalProxyPort,
+        username: _globalProxyUsername,
+        password: _globalProxyPassword,
+        bypass: _globalProxyBypass,
+      );
+
+  static const GlobalProxySnapshot defaultGlobalProxySnapshot =
+      GlobalProxySnapshot(
+        enabled: false,
+        type: 'http',
+        host: '',
+        port: '8080',
+        username: '',
+        password: '',
+        bypass:
+            'localhost,127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,::1',
+      );
+
+  Future<void> syncApplyGlobalProxy(GlobalProxySnapshot snapshot) async {
+    await ready;
+    await _runGlobalProxyWrite(() async {
+      _globalProxyEnabled = snapshot.enabled;
+      _globalProxyType = snapshot.type;
+      _globalProxyHost = snapshot.host;
+      _globalProxyPort = snapshot.port;
+      _globalProxyUsername = snapshot.username;
+      _globalProxyPassword = snapshot.password;
+      _globalProxyBypass = snapshot.bypass;
+      notifyListeners();
+      applyGlobalProxyOverridesIfNeeded();
+    });
+  }
+
   void _publishGenerationSettings(GenerationSettingsSnapshot snapshot) {
     _currentModelProvider = snapshot.currentModel?.providerId;
     _currentModelId = snapshot.currentModel?.modelId;
@@ -1172,6 +1229,21 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
     await _writePreferencesAtomically(prefs, <String, Object?>{
       key: value,
     }, operation: '保存生成设置');
+  }
+
+  Future<void> _persistGlobalProxyPreference(String key, Object? value) async {
+    if (usesE2eeConfigVault(_syncWrites)) return;
+    final prefs = await SharedPreferences.getInstance();
+    await _writePreferencesAtomically(prefs, <String, Object?>{
+      key: value,
+    }, operation: '保存全局代理');
+  }
+
+  Future<T> _runGlobalProxyWrite<T>(Future<T> Function() write) {
+    return _syncWrites.runLocal<T>(
+      key: ConfigSyncKeys.globalProxy,
+      write: write,
+    );
   }
 
   Future<T> _runGenerationSettingsWrite<T>(Future<T> Function() write) {
@@ -1624,17 +1696,30 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
           prefs.getBool(_searchAutoTestOnLaunchKey) ?? false;
     }
 
-    // load global proxy
-    _globalProxyEnabled = prefs.getBool(_globalProxyEnabledKey) ?? false;
-    _globalProxyType = prefs.getString(_globalProxyTypeKey) ?? 'http';
-    _globalProxyHost = prefs.getString(_globalProxyHostKey) ?? '';
-    _globalProxyPort = prefs.getString(_globalProxyPortKey) ?? '8080';
-    _globalProxyUsername = prefs.getString(_globalProxyUsernameKey) ?? '';
-    _globalProxyPassword = prefs.getString(_globalProxyPasswordKey) ?? '';
-    final bypass = prefs.getString(_globalProxyBypassKey);
+    // load global proxy；账号模式只信任 E2EE Vault 水合值。
+    _globalProxyEnabled = useConfigVault
+        ? false
+        : prefs.getBool(_globalProxyEnabledKey) ?? false;
+    _globalProxyType =
+        useConfigVault ? 'http' : prefs.getString(_globalProxyTypeKey) ?? 'http';
+    _globalProxyHost =
+        useConfigVault ? '' : prefs.getString(_globalProxyHostKey) ?? '';
+    _globalProxyPort =
+        useConfigVault ? '8080' : prefs.getString(_globalProxyPortKey) ?? '8080';
+    _globalProxyUsername = useConfigVault
+        ? ''
+        : prefs.getString(_globalProxyUsernameKey) ?? '';
+    _globalProxyPassword = useConfigVault
+        ? ''
+        : prefs.getString(_globalProxyPasswordKey) ?? '';
+    final bypass = useConfigVault
+        ? null
+        : prefs.getString(_globalProxyBypassKey);
     if (bypass == null) {
       _globalProxyBypass = _defaultGlobalProxyBypassRules;
-      await prefs.setString(_globalProxyBypassKey, _globalProxyBypass);
+      if (!useConfigVault) {
+        await prefs.setString(_globalProxyBypassKey, _globalProxyBypass);
+      }
     } else {
       _globalProxyBypass = bypass;
     }
@@ -1708,56 +1793,67 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> setGlobalProxyEnabled(bool v) async {
-    _globalProxyEnabled = v;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_globalProxyEnabledKey, _globalProxyEnabled);
-  }
+  Future<void> setGlobalProxyEnabled(bool v) => _runGlobalProxyWrite(() async {
+        _globalProxyEnabled = v;
+        notifyListeners();
+        await _persistGlobalProxyPreference(
+          _globalProxyEnabledKey,
+          _globalProxyEnabled,
+        );
+      });
 
-  Future<void> setGlobalProxyType(String v) async {
-    _globalProxyType = v.trim().isEmpty ? 'http' : v.trim();
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_globalProxyTypeKey, _globalProxyType);
-  }
+  Future<void> setGlobalProxyType(String v) =>
+      _runGlobalProxyWrite(() async {
+        _globalProxyType = v.trim().isEmpty ? 'http' : v.trim();
+        notifyListeners();
+        await _persistGlobalProxyPreference(
+          _globalProxyTypeKey,
+          _globalProxyType,
+        );
+      });
 
-  Future<void> setGlobalProxyHost(String v) async {
-    _globalProxyHost = v.trim();
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_globalProxyHostKey, _globalProxyHost);
-  }
+  Future<void> setGlobalProxyHost(String v) => _runGlobalProxyWrite(() async {
+        _globalProxyHost = v.trim();
+        notifyListeners();
+        await _persistGlobalProxyPreference(_globalProxyHostKey, _globalProxyHost);
+      });
 
-  Future<void> setGlobalProxyPort(String v) async {
-    _globalProxyPort = v.trim();
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_globalProxyPortKey, _globalProxyPort);
-  }
+  Future<void> setGlobalProxyPort(String v) => _runGlobalProxyWrite(() async {
+        _globalProxyPort = v.trim();
+        notifyListeners();
+        await _persistGlobalProxyPreference(_globalProxyPortKey, _globalProxyPort);
+      });
 
-  Future<void> setGlobalProxyUsername(String v) async {
-    _globalProxyUsername = v;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_globalProxyUsernameKey, _globalProxyUsername);
-  }
+  Future<void> setGlobalProxyUsername(String v) =>
+      _runGlobalProxyWrite(() async {
+        _globalProxyUsername = v;
+        notifyListeners();
+        await _persistGlobalProxyPreference(
+          _globalProxyUsernameKey,
+          _globalProxyUsername,
+        );
+      });
 
-  Future<void> setGlobalProxyPassword(String v) async {
-    final prefs = await SharedPreferences.getInstance();
-    await _writePreferencesAtomically(prefs, <String, Object?>{
-      _globalProxyPasswordKey: v.isEmpty ? null : v,
-    }, operation: '保存全局代理密码');
-    _globalProxyPassword = v;
-    notifyListeners();
-  }
+  Future<void> setGlobalProxyPassword(String v) =>
+      _runGlobalProxyWrite(() async {
+        if (!usesE2eeConfigVault(_syncWrites)) {
+          final prefs = await SharedPreferences.getInstance();
+          await _writePreferencesAtomically(prefs, <String, Object?>{
+            _globalProxyPasswordKey: v.isEmpty ? null : v,
+          }, operation: '保存全局代理密码');
+        }
+        _globalProxyPassword = v;
+        notifyListeners();
+      });
 
-  Future<void> setGlobalProxyBypass(String v) async {
-    _globalProxyBypass = v.trim();
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_globalProxyBypassKey, _globalProxyBypass);
-  }
+  Future<void> setGlobalProxyBypass(String v) => _runGlobalProxyWrite(() async {
+        _globalProxyBypass = v.trim();
+        notifyListeners();
+        await _persistGlobalProxyPreference(
+          _globalProxyBypassKey,
+          _globalProxyBypass,
+        );
+      });
 
   // Apply global proxy to Dart IO layer; provider-level proxies take precedence at call sites.
   String _lastProxySignature = '';

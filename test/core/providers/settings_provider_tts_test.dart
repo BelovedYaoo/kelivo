@@ -83,6 +83,42 @@ void main() {
     expect(preferences.getBool('tts_auto_play_assistant_replies_v1'), isTrue);
     expect(preferences.getString('tts_text_selection_mode_v1'), 'quotedOnly');
   });
+
+  test('账户 Vault 模式忽略且不回写明文全局代理偏好', () async {
+    SharedPreferences.setMockInitialValues(const <String, Object>{
+      'global_proxy_enabled_v1': true,
+      'global_proxy_host_v1': 'old.example.com',
+      'global_proxy_username_v1': 'old-user',
+      'global_proxy_password_v1': 'old-secret',
+    });
+
+    final settings = SettingsProvider(
+      syncWriteExecutor: const _VaultConfigWriteExecutor(),
+    );
+    await settings.ready;
+
+    expect(settings.globalProxyEnabled, isFalse);
+    expect(settings.globalProxyHost, '');
+    expect(settings.globalProxyUsername, '');
+    expect(settings.globalProxyPassword, '');
+
+    await settings.setGlobalProxyEnabled(true);
+    await settings.setGlobalProxyHost('new.example.com');
+    await settings.setGlobalProxyUsername('new-user');
+    await settings.setGlobalProxyPassword('new-secret');
+
+    final preferences = await SharedPreferences.getInstance();
+    expect(settings.globalProxyEnabled, isTrue);
+    expect(settings.globalProxyHost, 'new.example.com');
+    expect(settings.globalProxyUsername, 'new-user');
+    expect(settings.globalProxyPassword, 'new-secret');
+    // 明文介质保持旧值不变，证明 Vault 模式下不落明文。
+    expect(preferences.getBool('global_proxy_enabled_v1'), isTrue);
+    expect(preferences.getString('global_proxy_host_v1'), 'old.example.com');
+    expect(preferences.getString('global_proxy_username_v1'), 'old-user');
+    expect(preferences.getString('global_proxy_password_v1'), 'old-secret');
+    settings.dispose();
+  });
 }
 
 Future<void> _waitUntil(bool Function() condition) async {

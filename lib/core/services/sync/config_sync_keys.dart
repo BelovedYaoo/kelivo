@@ -61,6 +61,10 @@ abstract final class ConfigSyncKeys {
     entityType: preferenceType,
     entityId: 'generation-settings:default',
   );
+  static const SyncEntityKey globalProxy = SyncEntityKey(
+    entityType: preferenceType,
+    entityId: 'global-proxy:default',
+  );
 
   static const Set<String> preferenceEntityIds = <String>{
     'profile:default',
@@ -72,6 +76,7 @@ abstract final class ConfigSyncKeys {
     'tts-state:default',
     'mcp-state:default',
     'generation-settings:default',
+    'global-proxy:default',
   };
 
   static SyncEntityKey provider(String id) => _entity(providerType, id);

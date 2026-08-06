@@ -117,9 +117,17 @@ final class E2eeAccountKeyLease {
   Future<void> close() async {
     final ark = _accountRootKey;
     if (ark == null) return;
-    // 先撤销对象可见的所有权，原生关闭失败时也不得继续使用未知状态句柄。
+    try {
+      await _secureCore.closeAccountRootKey(ark);
+    } catch (_) {
+      // 原生关闭失败时句柄仍处于可重试状态（绑定层 cancelClose 恢复 open）。
+      // 仅当所有权未被转移时恢复持有，允许调用方重试 close，避免句柄泄漏。
+      if (identical(_accountRootKey, ark)) {
+        _accountRootKey = ark;
+      }
+      rethrow;
+    }
     _accountRootKey = null;
-    await _secureCore.closeAccountRootKey(ark);
   }
 
   static Future<void> _cleanupAfterOpenFailure({

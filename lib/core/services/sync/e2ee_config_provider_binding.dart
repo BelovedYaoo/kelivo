@@ -466,6 +466,9 @@ final class E2eeConfigProviderBinding implements E2eeConfigSyncBinding {
       ConfigSyncKeys.generationSettings => _generationSettingsPayload(
         _settings.generationSettingsSnapshot,
       ),
+      ConfigSyncKeys.globalProxy => _globalProxyPayload(
+        _settings.globalProxySnapshot,
+      ),
       _ => throw StateError('sync_config_preference_id_unreachable'),
     };
   }
@@ -710,6 +713,10 @@ final class E2eeConfigProviderBinding implements E2eeConfigSyncBinding {
         await _settings.syncApplyGenerationSettings(
           _generationSettingsSnapshot(payload),
         );
+      case ConfigSyncKeys.globalProxy:
+        await _settings.syncApplyGlobalProxy(
+          _globalProxySnapshot(payload),
+        );
       default:
         throw StateError('sync_config_preference_id_unreachable');
     }
@@ -779,6 +786,10 @@ final class E2eeConfigProviderBinding implements E2eeConfigSyncBinding {
         await _settings.syncApplyGenerationSettings(
           SettingsProvider.defaultGenerationSettingsSnapshot,
         );
+      case ConfigSyncKeys.globalProxy:
+        await _settings.syncApplyGlobalProxy(
+          SettingsProvider.defaultGlobalProxySnapshot,
+        );
       default:
         throw StateError('sync_config_preference_id_unreachable');
     }
@@ -823,6 +834,28 @@ bool _sameAssetIdentity(
     left.manifestKeyEpoch == right.manifestKeyEpoch &&
     left.manifestRevision == right.manifestRevision &&
     left.kind == right.kind;
+
+Map<String, Object?> _globalProxyPayload(GlobalProxySnapshot snapshot) =>
+    <String, Object?>{
+      'enabled': snapshot.enabled,
+      'type': snapshot.type,
+      'host': snapshot.host,
+      'port': snapshot.port,
+      'username': snapshot.username,
+      'password': snapshot.password,
+      'bypass': snapshot.bypass,
+    };
+
+GlobalProxySnapshot _globalProxySnapshot(Map<String, Object?> payload) =>
+    GlobalProxySnapshot(
+      enabled: payload['enabled']! as bool,
+      type: payload['type']! as String,
+      host: payload['host']! as String,
+      port: payload['port']! as String,
+      username: payload['username']! as String,
+      password: payload['password']! as String,
+      bypass: payload['bypass']! as String,
+    );
 
 Map<String, Object?> _generationSettingsPayload(
   GenerationSettingsSnapshot snapshot,

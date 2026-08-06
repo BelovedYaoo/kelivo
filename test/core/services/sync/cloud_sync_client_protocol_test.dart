@@ -6050,6 +6050,92 @@ void main() {
     );
   });
 
+  test('OPAQUE 凭据失败（错误密码或不存在账号）统一映射为未认证', () async {
+    const core = KelivoSecureCore();
+    if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final subscription = server.listen((request) async {
+      if (request.uri.path == '/api/auth/opaque-login/start') {
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(
+          jsonEncode(<String, Object?>{
+            'data': <String, Object?>{
+              'protocolVersion': cloudSyncOpaqueProtocolVersion,
+              'attemptId': _attemptId1,
+              'accountBinding': _accountContextId,
+              'deviceChallenge': _encodedBytes(
+                cloudSyncDeviceChallengeBytes,
+                11,
+              ),
+              // 无效凭据响应：长度合法但内容是随机字节，
+              // 本地 OPAQUE 计算在凭据验证阶段必然协议失败。
+              'credentialResponse': _encodedBytes(
+                cloudSyncOpaqueCredentialResponseBytes,
+                0x5a,
+              ),
+              'expiresAt': '2026-07-26T05:05:00.000Z',
+            },
+          }),
+        );
+        await request.response.close();
+        return;
+      }
+      request.response.statusCode = HttpStatus.unauthorized;
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(
+        jsonEncode(<String, Object?>{
+          'error': <String, Object?>{
+            'code': 'AUTHENTICATION_FAILED',
+            'message': 'Authentication failed',
+          },
+        }),
+      );
+      await request.response.close();
+    });
+    final testRoot = Directory(
+      '${Directory.current.path}${Platform.pathSeparator}.dart_tool'
+      '${Platform.pathSeparator}e2ee_authenticator_tests',
+    );
+    await testRoot.create(recursive: true);
+    final root = await testRoot.createTemp('kelivo-e2ee-opaque-credential-');
+    final baseUrl = 'http://${server.address.address}:${server.port}';
+    final client = CloudSyncClient.forTesting(baseUrl: baseUrl);
+    final store = DeviceStateBlobStore(installationRoot: root);
+    final authenticator = E2eeAccountAuthenticator(
+      baseUrl: baseUrl,
+      accountClient: client,
+      deviceStateStore: store,
+      secureCore: core,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await subscription.cancel();
+      await server.close(force: true);
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+
+    // 不存在的账号与服务端伪凭据响应必须与错误密码表现一致：
+    // 统一为未认证错误，不向登录界面泄漏账号存在性。
+    final password = Uint8List.fromList(utf8.encode('wrong-password'));
+    await expectLater(
+      authenticator.loginDevice(
+        loginName: 'missing-account',
+        password: password,
+        deviceName: 'Windows 主机',
+        platform: CloudSyncPlatform.windows,
+        clientVersion: '1.2.3',
+      ),
+      throwsA(
+        isA<CloudSyncException>().having(
+          (error) => error.kind,
+          'kind',
+          CloudSyncFailureKind.unauthenticated,
+        ),
+      ),
+    );
+    expect(password, everyElement(0));
+  });
+
   test('OPAQUE 待批准结果拒绝越界认证代次', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final requestFuture = server.first;

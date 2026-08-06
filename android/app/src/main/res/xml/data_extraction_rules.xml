@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- E2EE 本地状态（SQLCipher、安全槽、恢复介质）不得进入任何云备份或设备迁移。
+     allowBackup=false 已禁用全部备份；此规则作为 Android 12+ 的兜底，
+     防止 manifest 合并或未来变更重新放开备份时泄漏本地密文状态。 -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" path="." />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" path="." />
+    </device-transfer>
+</data-extraction-rules>

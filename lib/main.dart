@@ -797,7 +797,10 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(
           lazy: false,
           create: (_) =>
-              McpProvider(syncWriteExecutor: configSyncWriteExecutor),
+              McpProvider(
+                syncWriteExecutor: configSyncWriteExecutor,
+                secureCore: const KelivoSecureCore(),
+              ),
         ),
         ChangeNotifierProvider(create: (_) => ToolApprovalService()),
         ChangeNotifierProvider(create: (_) => AskUserInteractionService()),

@@ -772,8 +772,37 @@ void _validatePreference(
       _requiredPositiveInteger(payload, 'requestTimeoutSeconds');
     case 'generation-settings:default':
       _validateGenerationSettingsPreference(payload);
+    case 'global-proxy:default':
+      _validateGlobalProxyPreference(payload);
     default:
       throw StateError('sync_config_preference_id_unreachable');
+  }
+}
+
+void _validateGlobalProxyPreference(Map<String, Object?> payload) {
+  _expectExactKeys(payload, const <String>{
+    'enabled',
+    'type',
+    'host',
+    'port',
+    'username',
+    'password',
+    'bypass',
+  }, 'global-proxy');
+  if (payload['enabled']! is! bool) {
+    throw const FormatException('global-proxy.enabled 必须是布尔值');
+  }
+  for (final key in const <String>[
+    'type',
+    'host',
+    'port',
+    'username',
+    'password',
+    'bypass',
+  ]) {
+    if (payload[key]! is! String) {
+      throw FormatException('global-proxy.$key 必须是字符串');
+    }
   }
 }
 

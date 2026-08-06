@@ -1,6 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
+import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 import 'package:mcp_client/mcp_client.dart' as mcp;
 import '../services/mcp/kelivo_fetch/kelivo_fetch_server.dart';
 import '../services/mcp/stdio_command_resolver.dart';
@@ -250,6 +253,23 @@ class McpProvider extends ChangeNotifier with BatchedChangeNotifier {
   static const String _localServersPrefsKey = 'mcp_local_servers_v1';
   static const String _prefsTimeoutKey = 'mcp_request_timeout_ms_v1';
 
+  // 本地服务器（stdio/inmemory）含 env 与命令路径，属设备本地凭据，刻意不同步。
+  // 存储时用设备安全槽密封；未注入 secure core（仅测试）时保持明文以便隔离。
+  static const String _encryptedStoragePrefix = 'kelivo-mcp-v1:';
+  static final Uint8List _localSlotId = Uint8List.fromList(
+    sha256.convert(utf8.encode('kelivo-mcp-local-servers')).bytes.sublist(0, 16),
+  );
+  static final Uint8List _localRecordId = Uint8List.fromList(
+    sha256
+        .convert(utf8.encode('kelivo-mcp-local-servers-record'))
+        .bytes
+        .sublist(0, 16),
+  );
+  static final Uint8List _localAssociatedData = Uint8List.fromList(
+    sha256.convert(utf8.encode('kelivo-mcp-local-servers-aad-v1')).bytes,
+  );
+  static const int _localRecordEpoch = 1;
+
   final Map<String, mcp.Client> _clients = {};
   final Map<String, McpStatus> _status = {}; // id -> status
   final Map<String, String> _errors = {}; // id -> last error
@@ -263,10 +283,78 @@ class McpProvider extends ChangeNotifier with BatchedChangeNotifier {
       McpStdioCommandResolver();
   late final Future<void> ready;
   final SyncWriteExecutor _syncWrites;
+  final KelivoSecureCore? _secureCore;
 
-  McpProvider({required SyncWriteExecutor syncWriteExecutor})
-    : _syncWrites = syncWriteExecutor {
+  McpProvider({
+    required SyncWriteExecutor syncWriteExecutor,
+    KelivoSecureCore? secureCore,
+  }) : _syncWrites = syncWriteExecutor,
+       _secureCore = secureCore {
     ready = _load();
+  }
+
+  Future<String?> _readEncryptedStorage(String key) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(key);
+    if (raw == null || raw.isEmpty) return null;
+    final core = _secureCore;
+    if (core == null || !raw.startsWith(_encryptedStoragePrefix)) {
+      // 无安全核心（测试）或旧明文数据：按明文返回，由调用方决定迁移。
+      return raw.startsWith(_encryptedStoragePrefix) ? null : raw;
+    }
+    final KelivoKeyHandle handle;
+    try {
+      handle = await core.openSlot(_localSlotId);
+    } on KelivoSecureCoreException {
+      // 槽不存在说明密文是孤儿数据（本地清除过安全槽）。
+      return null;
+    }
+    try {
+      final envelope = base64Decode(raw.substring(_encryptedStoragePrefix.length));
+      final plaintext = await core.openRecord(
+        handle,
+        recordId: _localRecordId,
+        epoch: _localRecordEpoch,
+        associatedData: _localAssociatedData,
+        envelope: envelope,
+      );
+      return utf8.decode(plaintext);
+    } on KelivoSecureCoreException {
+      return null;
+    } finally {
+      await core.close(handle);
+    }
+  }
+
+  Future<void> _writeEncryptedStorage(String key, String json) async {
+    final prefs = await SharedPreferences.getInstance();
+    final core = _secureCore;
+    if (core == null) {
+      await prefs.setString(key, json);
+      return;
+    }
+    final KelivoKeyHandle handle;
+    try {
+      handle = await core.createSlot(_localSlotId);
+    } on KelivoSecureCoreException catch (error) {
+      if (error.status != KelivoSecureCoreStatus.slotAlreadyExists) rethrow;
+      handle = await core.openSlot(_localSlotId);
+    }
+    try {
+      final envelope = await core.sealRecord(
+        handle,
+        recordId: _localRecordId,
+        epoch: _localRecordEpoch,
+        associatedData: _localAssociatedData,
+        plaintext: Uint8List.fromList(utf8.encode(json)),
+      );
+      await prefs.setString(
+        key,
+        '$_encryptedStoragePrefix${base64Encode(envelope)}',
+      );
+    } finally {
+      await core.close(handle);
+    }
   }
 
   bool _isPortable(McpServerConfig server) =>
@@ -313,9 +401,9 @@ class McpProvider extends ChangeNotifier with BatchedChangeNotifier {
         _requestTimeout = Duration(milliseconds: timeoutMs);
       }
     }
-    final raw = prefs.getString(
-      useConfigVault ? _localServersPrefsKey : _prefsKey,
-    );
+    final storageKey = useConfigVault ? _localServersPrefsKey : _prefsKey;
+    final raw = await _readEncryptedStorage(storageKey);
+    var migratedPlaintext = false;
     if (raw != null && raw.isNotEmpty) {
       try {
         final decoded = (jsonDecode(raw) as List)
@@ -328,9 +416,19 @@ class McpProvider extends ChangeNotifier with BatchedChangeNotifier {
         _servers = useConfigVault
             ? decoded.where((server) => !_isPortable(server)).toList()
             : decoded;
+        // 旧版本以明文落盘；检测到明文时立即重写为密封密文。
+        final storedRaw = prefs.getString(storageKey);
+        if (_secureCore != null &&
+            storedRaw != null &&
+            !storedRaw.startsWith(_encryptedStoragePrefix)) {
+          migratedPlaintext = true;
+        }
       } catch (_) {
         _servers = <McpServerConfig>[];
       }
+    }
+    if (migratedPlaintext) {
+      await _persist();
     }
     // Ensure built-in @kelivo/fetch is present by default
     _ensureBuiltinFetchServerPresent();
@@ -372,7 +470,7 @@ class McpProvider extends ChangeNotifier with BatchedChangeNotifier {
     final persistedServers = useConfigVault
         ? _servers.where((server) => !_isPortable(server))
         : _servers;
-    await prefs.setString(
+    await _writeEncryptedStorage(
       useConfigVault ? _localServersPrefsKey : _prefsKey,
       jsonEncode(persistedServers.map((e) => e.toJson()).toList()),
     );

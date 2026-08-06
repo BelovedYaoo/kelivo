@@ -4,6 +4,11 @@ import 'dart:typed_data';
 const e2eeRecoveryPassphraseMatchesPasswordCode =
     'SYNC_RECOVERY_PASSPHRASE_MATCHES_PASSWORD';
 
+/// OPAQUE 凭据验证失败（错误密码或不存在账号）的统一未认证错误码。
+/// 服务端对凭据失败返回 `AUTHENTICATION_FAILED`，客户端本地 OPAQUE 计算
+/// 阶段出现的协议失败也收敛到同一错误码，避免区分账号是否存在。
+const e2eeOpaqueAuthenticationFailedCode = 'OPAQUE_AUTHENTICATION_FAILED';
+
 Uint8List takeSensitiveEncodedBytes(List<int> encoded) {
   if (encoded is Uint8List) return encoded;
   try {
