@@ -126,3 +126,4 @@
 - 遗留：`_worktrees/kelivo-recovery-onboarding`、`kelivo-e2ee-ci-gates` 为无注册无分支的孤儿目录（疑似 8/3 清理遗留），待确认后删除；GitHub 直连不通，131+ 提交未推送；`feature/e2ee-chat-runtime` 尚未合入 `main`（P0 验证 gate 未满足）。
 - 2026-08-06 合并收尾：两个 worktree 工作合入后修复 44 处编译错误（checkpoint 泛型推断、导入附件 target API 适配、独立接口显式转换、Isolate 闭包上下文）；`flutter analyze lib test` 0 error；备份导入/outbox/内容门禁 334 项相关测试通过（唯一未跑：安全核心槽测试需 `run_secure_core_test.ps1` 隔离入口）。旧契约撤销测试 8 项删除（checkpoint 依赖私有成员构造，撤销编排覆盖需在安全槽测试域重建）。
 - 验证环境修复：rustup 渠道同步走 rsproxy 镜像（hook 透传），Flutter 测试在 Windows 不再卡死。
+- 2026-08-06 远端灾备完成：配置本机 7890 代理后推送客户端 145 个提交（75b0342a..24f8205a）与服务端 35 个提交（4f57042..d0f492b）；gh token 已含 workflow scope（推送含 workflow 文件修改必须）。
