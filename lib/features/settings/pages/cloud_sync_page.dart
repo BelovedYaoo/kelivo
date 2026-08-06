@@ -584,9 +584,9 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
               for (int index = 0; index < provider.devices.length; index++) ...[
                 _DeviceRow(
                   device: provider.devices[index],
-                  revokeEnabled:
-                      !provider.devices[index].isCurrent ||
-                      provider.localDeviceWipeSupported,
+                  revokeEnabled: provider.devices[index].isCurrent
+                      ? provider.localDeviceWipeSupported
+                      : provider.trustedDeviceRevocationSupported,
                   disabledReason:
                       provider.devices[index].isCurrent &&
                           !provider.localDeviceWipeSupported
@@ -1050,6 +1050,9 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
   Future<void> _revokeDevice(CloudSyncDeviceSession device) async {
     final provider = context.read<CloudSyncProvider>();
     if (device.isCurrent && !provider.localDeviceWipeSupported) return;
+    if (!device.isCurrent && !provider.trustedDeviceRevocationSupported) {
+      return;
+    }
     final confirmed = await _showRevokeDialog(device);
     if (confirmed != true || !mounted) return;
     final success = await provider.revokeDevice(device.id);

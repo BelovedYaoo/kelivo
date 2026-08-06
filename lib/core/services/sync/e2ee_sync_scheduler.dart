@@ -20,8 +20,21 @@ typedef E2eeSyncBackgroundErrorReporter =
 typedef E2eeSyncTerminalFailureClassifier = bool Function(Object error);
 typedef E2eeSyncTerminalFailureHandler =
     Future<void> Function(Object error, StackTrace stackTrace);
+typedef E2eeSyncSecurityStateChangedHandler = Future<void> Function();
 
-enum E2eeSyncCycleDisposition { completed, keyEpochUnavailable }
+enum E2eeSyncSecurityMaintenanceDisposition {
+  continueSync,
+  securityStateChanged,
+}
+
+typedef E2eeSyncSecurityMaintenance =
+    Future<E2eeSyncSecurityMaintenanceDisposition> Function();
+
+enum E2eeSyncCycleDisposition {
+  completed,
+  keyEpochUnavailable,
+  securityStateChanged,
+}
 
 final class E2eeSyncCycleReport {
   const E2eeSyncCycleReport({
@@ -47,6 +60,7 @@ final class E2eeSyncCycleRunner {
     required this._advanceAttachmentUploads,
     required this._sealNext,
     required this._flushOnce,
+    this._securityMaintenance = _continueSecurityMaintenance,
     this.pullPageLimit = 10,
     this.maximumPullPagesPerPhase = 4,
     this.maximumAttachmentRemoteSteps = 4,
@@ -86,12 +100,24 @@ final class E2eeSyncCycleRunner {
   final E2eeSyncAdvanceAttachmentUploads _advanceAttachmentUploads;
   final E2eeSyncSealNext _sealNext;
   final E2eeSyncFlushOnce _flushOnce;
+  final E2eeSyncSecurityMaintenance _securityMaintenance;
   final int pullPageLimit;
   final int maximumPullPagesPerPhase;
   final int maximumAttachmentRemoteSteps;
   final int maximumSealAttempts;
 
   Future<E2eeSyncCycleReport> run() async {
+    final maintenance = await _securityMaintenance();
+    if (maintenance ==
+        E2eeSyncSecurityMaintenanceDisposition.securityStateChanged) {
+      return E2eeSyncCycleReport(
+        disposition: E2eeSyncCycleDisposition.securityStateChanged,
+        catchUpPullPages: 0,
+        sealedRecords: 0,
+        flushReport: const E2eeSyncFlushReport.idle(),
+        finalPullPages: 0,
+      );
+    }
     final catchUp = await _runBoundedPullPhase();
     if (catchUp.keyEpochUnavailable) {
       return E2eeSyncCycleReport(
@@ -164,6 +190,7 @@ enum E2eeSyncSchedulerState {
   polling,
   retrying,
   keyEpochPaused,
+  securityStateChanged,
   terminated,
   closing,
   closed,
@@ -180,6 +207,7 @@ final class E2eeSyncScheduler {
     this._errorReporter = _defaultErrorReporter,
     this._isTerminalFailure = _neverTerminalFailure,
     this._onTerminalFailure = _ignoreTerminalFailure,
+    this._onSecurityStateChanged = _ignoreSecurityStateChanged,
   }) : _pollInterval = _requirePositiveDuration(pollInterval, 'pollInterval'),
        _initialRetryDelay = _requirePositiveDuration(
          initialRetryDelay,
@@ -206,6 +234,7 @@ final class E2eeSyncScheduler {
   final E2eeSyncBackgroundErrorReporter _errorReporter;
   final E2eeSyncTerminalFailureClassifier _isTerminalFailure;
   final E2eeSyncTerminalFailureHandler _onTerminalFailure;
+  final E2eeSyncSecurityStateChangedHandler _onSecurityStateChanged;
 
   E2eeSyncSchedulerState _state = E2eeSyncSchedulerState.notStarted;
   Future<void>? _activeCycle;
@@ -247,6 +276,7 @@ final class E2eeSyncScheduler {
         _launchCycle();
         return;
       case E2eeSyncSchedulerState.keyEpochPaused:
+      case E2eeSyncSchedulerState.securityStateChanged:
       case E2eeSyncSchedulerState.terminated:
       case E2eeSyncSchedulerState.closing:
       case E2eeSyncSchedulerState.closed:
@@ -275,6 +305,7 @@ final class E2eeSyncScheduler {
 
   void _launchCycle() {
     if (_state == E2eeSyncSchedulerState.closing ||
+        _state == E2eeSyncSchedulerState.securityStateChanged ||
         _state == E2eeSyncSchedulerState.terminated ||
         _state == E2eeSyncSchedulerState.closed ||
         _activeCycle != null) {
@@ -341,6 +372,13 @@ final class E2eeSyncScheduler {
     if (report?.disposition == E2eeSyncCycleDisposition.keyEpochUnavailable) {
       _wakePending = false;
       _state = E2eeSyncSchedulerState.keyEpochPaused;
+      return;
+    }
+    if (report?.disposition ==
+        E2eeSyncCycleDisposition.securityStateChanged) {
+      _wakePending = false;
+      _state = E2eeSyncSchedulerState.securityStateChanged;
+      unawaited(_notifySecurityStateChanged());
       return;
     }
 
@@ -411,6 +449,14 @@ final class E2eeSyncScheduler {
       }),
     );
   }
+
+  Future<void> _notifySecurityStateChanged() async {
+    try {
+      await _onSecurityStateChanged();
+    } catch (error, stackTrace) {
+      _reportBackgroundError(error, stackTrace);
+    }
+  }
 }
 
 Timer _defaultTimerFactory(Duration delay, void Function() callback) {
@@ -422,6 +468,12 @@ void _defaultErrorReporter(Object error, StackTrace stackTrace) {
 }
 
 bool _neverTerminalFailure(Object error) => false;
+
+Future<E2eeSyncSecurityMaintenanceDisposition>
+_continueSecurityMaintenance() async =>
+    E2eeSyncSecurityMaintenanceDisposition.continueSync;
+
+Future<void> _ignoreSecurityStateChanged() async {}
 
 Future<void> _ignoreTerminalFailure(
   Object error,

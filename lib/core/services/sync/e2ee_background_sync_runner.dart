@@ -21,8 +21,11 @@ import 'cloud_sync_terminal_session_retirement.dart';
 import 'cloud_sync_types.dart';
 import 'e2ee_account_authenticator.dart';
 import 'e2ee_chat_content_runtime.dart';
+import 'e2ee_device_revocation_runtime.dart';
 import 'e2ee_sync_execution_budget.dart';
 import 'e2ee_sync_scheduler.dart';
+import 'e2ee_trusted_self_revocation_processor.dart';
+import '../workspace/e2ee_data_rekey_stage_store.dart';
 
 final class E2eeBackgroundSyncLimits {
   const E2eeBackgroundSyncLimits({
@@ -72,6 +75,7 @@ enum E2eeBackgroundSyncDisposition {
   workspaceBusy,
   completed,
   blockedByKeyEpoch,
+  securityStateChanged,
   budgetExhausted,
   authenticationRetired,
 }
@@ -94,6 +98,13 @@ final class E2eeBackgroundSyncOutcome {
 
   const E2eeBackgroundSyncOutcome.blockedByKeyEpoch(E2eeSyncCycleReport report)
     : this._(E2eeBackgroundSyncDisposition.blockedByKeyEpoch, report: report);
+
+  const E2eeBackgroundSyncOutcome.securityStateChanged(
+    E2eeSyncCycleReport report,
+  ) : this._(
+        E2eeBackgroundSyncDisposition.securityStateChanged,
+        report: report,
+      );
 
   const E2eeBackgroundSyncOutcome.budgetExhausted(
     E2eeSyncBudgetExhaustion reason,
@@ -306,11 +317,14 @@ final class E2eeBackgroundSyncRunner {
             final report = await activeContent.runOnce(
               executionBudget: executionBudget,
             );
-            outcome =
-                report.disposition ==
-                    E2eeSyncCycleDisposition.keyEpochUnavailable
-                ? E2eeBackgroundSyncOutcome.blockedByKeyEpoch(report)
-                : E2eeBackgroundSyncOutcome.completed(report);
+            outcome = switch (report.disposition) {
+              E2eeSyncCycleDisposition.keyEpochUnavailable =>
+                E2eeBackgroundSyncOutcome.blockedByKeyEpoch(report),
+              E2eeSyncCycleDisposition.securityStateChanged =>
+                E2eeBackgroundSyncOutcome.securityStateChanged(report),
+              E2eeSyncCycleDisposition.completed =>
+                E2eeBackgroundSyncOutcome.completed(report),
+            };
           } on E2eeSyncBudgetExhausted catch (error) {
             outcome = E2eeBackgroundSyncOutcome.budgetExhausted(error.reason);
           } catch (error) {
@@ -694,18 +708,56 @@ final class _ProductionBackgroundSyncWorkspace
       final databaseGateway = ChatDatabaseGateway(cipher: databaseCipher);
       final activeClient = CloudSyncClient(token: activeSession.token);
       client = activeClient;
+      final deviceStateStore = DeviceStateBlobStore(
+        installationRoot: _workspaceRuntime.installationRoot,
+      );
+      const secureCore = KelivoSecureCore();
+      final databaseFile = File(
+        '${appDataDirectory.path}${Platform.pathSeparator}'
+        '${AppDatabase.databaseFileName}',
+      );
+      final revocationRuntime =
+          E2eeDeviceRevocationProductionRuntime.create(
+            baseUrl: activeSession.baseUrl,
+            normalizedLoginName: activeSession.loginName,
+            deviceStateStore: deviceStateStore,
+            secureCore: secureCore,
+            databaseGateway: databaseGateway,
+            databaseFile: databaseFile,
+            rotationTransport: activeClient,
+            dataRekeyTransport: activeClient,
+            stageStore: E2eeDataRekeyStageStore(
+              installationRoot: _workspaceRuntime.installationRoot,
+            ),
+          );
+      final selfRevocationProcessor = E2eeTrustedSelfRevocationProcessor(
+        baseUrl: activeSession.baseUrl,
+        normalizedLoginName: activeSession.loginName,
+        deviceStateStore: deviceStateStore,
+        secureCore: secureCore,
+        databaseGateway: databaseGateway,
+        databaseFile: databaseFile,
+        selfRevocationTransport: activeClient,
+        revocationRuntime: revocationRuntime,
+      );
       final activeRuntime = E2eeChatContentRuntime.takeHeadlessOwnership(
         session: activeSession,
-        deviceStateStore: DeviceStateBlobStore(
-          installationRoot: _workspaceRuntime.installationRoot,
-        ),
-        secureCore: const KelivoSecureCore(),
+        deviceStateStore: deviceStateStore,
+        secureCore: secureCore,
         databaseGateway: databaseGateway,
-        databaseFile: File(
-          '${appDataDirectory.path}${Platform.pathSeparator}'
-          '${AppDatabase.databaseFileName}',
-        ),
+        databaseFile: databaseFile,
         client: activeClient,
+        securityMaintenance: (budget) async {
+          final disposition = await selfRevocationProcessor.runOnce(
+            session: activeSession,
+            executionBudget: budget,
+          );
+          return disposition ==
+                  E2eeTrustedSelfRevocationProcessDisposition
+                      .securityStateChanged
+              ? E2eeSyncSecurityMaintenanceDisposition.securityStateChanged
+              : E2eeSyncSecurityMaintenanceDisposition.continueSync;
+        },
       );
       activeRuntime.bindSecurityBootstrapCommitHandler((pendingSession) {
         return _commitSecurityBootstrap(pendingSession, activeClient);
