@@ -64,3 +64,5 @@ internationalization.md
 /.agents/
 /skills-lock.json
 .tmp
+/android/build/
+/dependencies/*/.dart_tool/
