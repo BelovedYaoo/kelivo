@@ -30,6 +30,7 @@ import 'package:Kelivo/core/services/sync/cloud_sync_terminal_session_retirement
 import 'package:Kelivo/core/services/sync/cloud_sync_types.dart';
 import 'package:Kelivo/core/services/sync/config_sync_keys.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_key_transition.dart';
+import 'package:Kelivo/core/services/sync/e2ee_current_device_self_revocation.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_authenticator.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_recovery_runner.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_record_cipher.dart';
@@ -2791,6 +2792,38 @@ void main() {
 
     expect(bootstrapFactoryCalls, 0);
     expect(fixture.authentication.requestNames, isEmpty);
+  });
+
+  test('当前设备自撤销需要恢复替换时拒绝并给出明确错误', () async {
+    final wipe = _FakeLocalCryptographicWipe();
+    final client = _FakeCloudSyncAccountClient(
+      listedDevices: <CloudSyncDeviceSession>[_currentDevice()],
+    );
+    final fixture = await _createSignedInFixture(
+      client: client,
+      localCryptographicWipe: wipe,
+      configureLocalDeviceWipeInfrastructure: true,
+      currentDeviceRevocationPreparer:
+          ({required session, required mutationId}) async {
+            return const E2eeCurrentDeviceRecoveryReplacementRequired();
+          },
+      currentDeviceRevocationCommitter:
+          ({required client, required checkpoint}) async {
+            fail('恢复替换场景不得调用提交器');
+          },
+      stopBackgroundSync: () async {},
+      restartForLocalDeviceWipe: () async {},
+    );
+    addTearDown(fixture.close);
+    await fixture.provider.initialize();
+
+    expect(await fixture.provider.revokeDevice(_deviceId), isFalse);
+    expect(
+      fixture.provider.deviceError?.serverCode,
+      'SYNC_SELF_REVOCATION_RECOVERY_REPLACEMENT_REQUIRED',
+    );
+    expect(fixture.provider.signedIn, isTrue);
+    expect(wipe.requestedMarkCalls, 0);
   });
 
   test('幂等自撤销回执未接入时在 requested 和网络请求前拒绝', () async {
@@ -5988,6 +6021,7 @@ Future<_Fixture> _createSignedInFixture({
   E2eeFirstDeviceRecoveryBootstrapFactory? firstDeviceRecoveryBootstrapFactory,
   LocalCryptographicWipe? localCryptographicWipe,
   bool configureLocalDeviceWipeInfrastructure = false,
+  CloudSyncCurrentDeviceRevocationPreparer? currentDeviceRevocationPreparer,
   CloudSyncCurrentDeviceRevocationCommitter? currentDeviceRevocationCommitter,
   CloudSyncTrustedDeviceRevocationCommitter? trustedDeviceRevocationCommitter,
   CloudSyncRevocationMutationIdFactory? revocationMutationIdFactory,
@@ -6054,6 +6088,7 @@ Future<_Fixture> _createSignedInFixture({
           localCryptographicWipe: localCryptographicWipe,
           installationOperationLease: installationOperationLease,
           installationBusinessLease: installationBusinessLease,
+          currentDeviceRevocationPreparer: currentDeviceRevocationPreparer,
           currentDeviceRevocationCommitter: currentDeviceRevocationCommitter,
           trustedDeviceRevocationCommitter: trustedDeviceRevocationCommitter,
           revocationMutationIdFactory: revocationMutationIdFactory,
@@ -6078,6 +6113,7 @@ Future<_Fixture> _createSignedInFixture({
           localCryptographicWipe: localCryptographicWipe,
           installationOperationLease: installationOperationLease,
           installationBusinessLease: installationBusinessLease,
+          currentDeviceRevocationPreparer: currentDeviceRevocationPreparer,
           currentDeviceRevocationCommitter: currentDeviceRevocationCommitter,
           trustedDeviceRevocationCommitter: trustedDeviceRevocationCommitter,
           revocationMutationIdFactory: revocationMutationIdFactory,

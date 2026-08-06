@@ -326,6 +326,16 @@ class McpProvider extends ChangeNotifier with BatchedChangeNotifier {
     }
   }
 
+  Future<KelivoKeyHandle> _openOrCreateLocalSlot() async {
+    final core = _secureCore!;
+    try {
+      return await core.createSlot(_localSlotId);
+    } on KelivoSecureCoreException catch (error) {
+      if (error.status != KelivoSecureCoreStatus.slotAlreadyExists) rethrow;
+      return await core.openSlot(_localSlotId);
+    }
+  }
+
   Future<void> _writeEncryptedStorage(String key, String json) async {
     final prefs = await SharedPreferences.getInstance();
     final core = _secureCore;
@@ -333,13 +343,7 @@ class McpProvider extends ChangeNotifier with BatchedChangeNotifier {
       await prefs.setString(key, json);
       return;
     }
-    final KelivoKeyHandle handle;
-    try {
-      handle = await core.createSlot(_localSlotId);
-    } on KelivoSecureCoreException catch (error) {
-      if (error.status != KelivoSecureCoreStatus.slotAlreadyExists) rethrow;
-      handle = await core.openSlot(_localSlotId);
-    }
+    final handle = await _openOrCreateLocalSlot();
     try {
       final envelope = await core.sealRecord(
         handle,
