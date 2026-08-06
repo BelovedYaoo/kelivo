@@ -124,3 +124,5 @@
 - 2026-08-06 分支收敛：仓库已从 D 盘整体迁移到 E 盘，5 个 worktree 双向路径引用断裂后已修复。审查并提交两个脏 worktree 的未提交工作（备份导入 E2EE 意图管线 +1516 行、设备自撤销生产运行时 +2367 行），分别以 `478f4c45`、`370bbfe2` 合入主线。已删除分支：`feature/e2ee-recovery-production-wiring`、`feature/e2ee-recovery-reopen-lease`、`feature/e2ee-recovery-workspace-preparation`、`fix/e2ee-plaintext-path-race`（三个非等价提交已逐一验证被主线吸收）、`master`、`feature/e2ee-import-outbox`、`feature/e2ee-self-revocation-runtime-wiring`。保留 `main`、`upstream-main`。
 - 构建修复：安全核心 hook 显式透传 rustup 镜像（rsproxy），解决官方源不可达时构建卡死；移动端后台执行器补齐 `securityStateChanged` 枚举分支。
 - 遗留：`_worktrees/kelivo-recovery-onboarding`、`kelivo-e2ee-ci-gates` 为无注册无分支的孤儿目录（疑似 8/3 清理遗留），待确认后删除；GitHub 直连不通，131+ 提交未推送；`feature/e2ee-chat-runtime` 尚未合入 `main`（P0 验证 gate 未满足）。
+- 2026-08-06 合并收尾：两个 worktree 工作合入后修复 44 处编译错误（checkpoint 泛型推断、导入附件 target API 适配、独立接口显式转换、Isolate 闭包上下文）；`flutter analyze lib test` 0 error；备份导入/outbox/内容门禁 334 项相关测试通过（唯一未跑：安全核心槽测试需 `run_secure_core_test.ps1` 隔离入口）。旧契约撤销测试 8 项删除（checkpoint 依赖私有成员构造，撤销编排覆盖需在安全槽测试域重建）。
+- 验证环境修复：rustup 渠道同步走 rsproxy 镜像（hook 透传），Flutter 测试在 Windows 不再卡死。
