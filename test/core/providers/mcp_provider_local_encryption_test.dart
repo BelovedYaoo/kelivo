@@ -12,11 +12,11 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   late SecureCoreTestStoreScope testStoreScope;
 
-  setUpAll(() {
+  setUp(() {
     testStoreScope = SecureCoreTestStoreScope.open();
   });
 
-  tearDownAll(() {
+  tearDown(() {
     testStoreScope.close();
   });
 
@@ -50,8 +50,6 @@ void main() {
       (server) => server.name == 'local-tool',
     );
     expect(server.env['API_KEY'], 'super-secret');
-    reopened.dispose();
-    provider.dispose();
   });
 
   test('旧明文 MCP 数据加载后迁移为密封存储', () async {
@@ -77,6 +75,5 @@ void main() {
     await provider.ready;
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.getString('mcp_servers_v1'), startsWith('kelivo-mcp-v1:'));
-    provider.dispose();
   });
 }
