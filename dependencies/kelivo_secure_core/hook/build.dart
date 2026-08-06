@@ -241,6 +241,13 @@ Future<Map<String, String>> _cargoEnvironment(
     environment['SDKROOT'] = await _resolveIOSSDK(code.iOS.targetSdk);
     environment['IPHONEOS_DEPLOYMENT_TARGET'] = '${code.iOS.targetVersion}.0';
   }
+  // Dart Process.run 的 environment 会整体替换父进程环境，这里必须显式透传；
+  // rustup 的渠道同步与 toolchain 校验需要发行服务器，默认走国内镜像，
+  // 避免官方源不可达时构建卡死在下载阶段。
+  environment['RUSTUP_DIST_SERVER'] =
+      Platform.environment['RUSTUP_DIST_SERVER'] ?? 'https://rsproxy.cn';
+  environment['RUSTUP_UPDATE_ROOT'] =
+      Platform.environment['RUSTUP_UPDATE_ROOT'] ?? 'https://rsproxy.cn/rustup';
   return environment;
 }
 
