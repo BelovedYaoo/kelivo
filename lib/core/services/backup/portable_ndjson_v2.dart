@@ -130,6 +130,7 @@ final class PortableNdjsonV2 {
   static Future<BackupMergeReport> importFromFile({
     required ChatDatabaseRepository target,
     required File source,
+    Future<void> Function(List<String> conversationIds)? onImportedBeforeCommit,
   }) async {
     if (!await source.exists()) {
       throw FileSystemException('Portable archive does not exist', source.path);
@@ -240,7 +241,10 @@ final class PortableNdjsonV2 {
         throw const FormatException('portable_incomplete');
       }
       await candidate.close();
-      return await target.mergeBackupSnapshot(candidateFile);
+      return await target.mergeBackupSnapshot(
+        candidateFile,
+        onImportedBeforeCommit: onImportedBeforeCommit,
+      );
     } finally {
       await candidate.close();
       await temp.delete(recursive: true);

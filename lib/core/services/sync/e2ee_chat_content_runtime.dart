@@ -90,6 +90,7 @@ final class E2eeChatContentRuntime
         CloudSyncContentRuntime,
         E2eeConfigVaultWriteExecutor,
         ConfigAssetSyncWriteExecutor,
+        ImportSyncWriteExecutor,
         StructuredAttachmentSyncWriteExecutor {
   factory E2eeChatContentRuntime.takeOwnership({
     required CloudSyncAccountSession session,
@@ -793,47 +794,53 @@ final class E2eeChatContentRuntime
     await _awaitLocalOperationReadiness();
     _activeLocalWrites++;
     try {
-      final fileStore = _attachmentFileStore;
-      if (fileStore == null) {
-        throw StateError('E2EE 内容运行时缺少附件文件存储');
-      }
-      final materialized = <ChatMessageAttachment>[];
-      for (final attachment in inputs) {
-        if (attachment.hasRemoteIdentity) {
-          throw StateError('本地附件物化不得携带远端身份');
-        }
-        final contentSha256 = _decodeSha256Hex(attachment.contentHash);
-        final stored = await fileStore.publish(
-          location: E2eeAttachmentFileLocation.content(
-            contentSha256: contentSha256,
-          ),
-          source: File(attachment.path).openRead(),
-        );
-        if (stored.bytes != attachment.byteSize) {
-          throw StateError('附件内容寻址落盘长度与本地引用不一致');
-        }
-        final output = ChatMessageAttachment(
-          assetId: attachment.assetId,
-          path: stored.storagePath,
-          contentHash: attachment.contentHash,
-          byteSize: attachment.byteSize,
-          kind: attachment.kind,
-          displayName: attachment.displayName,
-          mediaType: attachment.mediaType,
-        );
-        final retirement = await _createMaterializedSourceRetirement(
-          sourcePath: attachment.path,
-          materializedPath: stored.storagePath,
-        );
-        if (retirement != null) {
-          _materializedSourceRetirements[output] = retirement;
-        }
-        materialized.add(output);
-      }
-      return List<ChatMessageAttachment>.unmodifiable(materialized);
+      return _materializeLocalAttachmentsCore(inputs);
     } finally {
       _finishLocalOperation();
     }
+  }
+
+  Future<List<ChatMessageAttachment>> _materializeLocalAttachmentsCore(
+    Iterable<ChatMessageAttachment> attachments,
+  ) async {
+    final fileStore = _attachmentFileStore;
+    if (fileStore == null) {
+      throw StateError('E2EE 内容运行时缺少附件文件存储');
+    }
+    final materialized = <ChatMessageAttachment>[];
+    for (final attachment in attachments) {
+      if (attachment.hasRemoteIdentity) {
+        throw StateError('本地附件物化不得携带远端身份');
+      }
+      final contentSha256 = _decodeSha256Hex(attachment.contentHash);
+      final stored = await fileStore.publish(
+        location: E2eeAttachmentFileLocation.content(
+          contentSha256: contentSha256,
+        ),
+        source: File(attachment.path).openRead(),
+      );
+      if (stored.bytes != attachment.byteSize) {
+        throw StateError('附件内容寻址落盘长度与本地引用不一致');
+      }
+      final output = ChatMessageAttachment(
+        assetId: attachment.assetId,
+        path: stored.storagePath,
+        contentHash: attachment.contentHash,
+        byteSize: attachment.byteSize,
+        kind: attachment.kind,
+        displayName: attachment.displayName,
+        mediaType: attachment.mediaType,
+      );
+      final retirement = await _createMaterializedSourceRetirement(
+        sourcePath: attachment.path,
+        materializedPath: stored.storagePath,
+      );
+      if (retirement != null) {
+        _materializedSourceRetirements[output] = retirement;
+      }
+      materialized.add(output);
+    }
+    return List<ChatMessageAttachment>.unmodifiable(materialized);
   }
 
   @override
@@ -1125,6 +1132,153 @@ final class E2eeChatContentRuntime
     } finally {
       _finishLocalOperation();
     }
+  }
+
+  @override
+  Future<T> runLocalImportBatches<T>({
+    required Stream<List<SyncEntityKey>> keyBatches,
+    required Stream<List<String>> attachmentRevisionBatches,
+    required Future<T> Function() write,
+  }) async {
+    await initialize();
+    _requireReadyForLocalOperation();
+    _activeLocalWrites++;
+    final materialized = <ChatMessageAttachment>[];
+    try {
+      final outbox = _outbox;
+      final uploads = _attachmentUploads;
+      final commands = _attachmentUploadCommands;
+      final repository = _databaseLease?.repository;
+      if (outbox == null ||
+          uploads == null ||
+          commands == null ||
+          repository == null) {
+        throw StateError('E2EE 内容运行时缺少导入组件');
+      }
+      var hasAttachmentUploadWork = false;
+      var hasMaterializedSourceRetirements = false;
+      final result = await outbox.runLocalImportBatches<T>(
+        keyBatches: keyBatches,
+        write: () async {
+          final value = await write();
+          final prepared = await _prepareImportedAttachmentDrafts(
+            revisionBatches: attachmentRevisionBatches,
+            uploads: uploads,
+            commands: commands,
+            repository: repository,
+            materialized: materialized,
+          );
+          hasAttachmentUploadWork = prepared.created;
+          hasMaterializedSourceRetirements = prepared.hasRetirements;
+          return value;
+        },
+      );
+      if (hasAttachmentUploadWork) _markAttachmentUploadWork();
+      if (hasMaterializedSourceRetirements) {
+        _scheduleMaterializedSourceRetirement();
+      }
+      if (_state == E2eeChatContentRuntimeState.ready) {
+        _scheduler?.wake();
+      }
+      return result;
+    } finally {
+      for (final attachment in materialized) {
+        _materializedSourceRetirements[attachment] = null;
+      }
+      _finishLocalOperation();
+    }
+  }
+
+  Future<({bool created, bool hasRetirements})>
+  _prepareImportedAttachmentDrafts({
+    required Stream<List<String>> revisionBatches,
+    required E2eeAttachmentUploadCoordinator uploads,
+    required E2eeAttachmentUploadCommands commands,
+    required ChatDatabaseRepository repository,
+    required List<ChatMessageAttachment> materialized,
+  }) async {
+    var created = false;
+    final retirements = <_MaterializedAttachmentSourceRetirement>[];
+    await for (final revisionBatch in revisionBatches) {
+      if (revisionBatch.length > syncImportEntityBatchLimit) {
+        throw RangeError.range(
+          revisionBatch.length,
+          0,
+          syncImportEntityBatchLimit,
+          'attachmentRevisionBatch.length',
+        );
+      }
+      final seenRevisionIds = <String>{};
+      for (final revisionId in revisionBatch) {
+        if (!seenRevisionIds.add(revisionId)) continue;
+        final message = await repository.getMessage(revisionId);
+        if (message == null) {
+          throw StateError('导入附件目标消息不存在');
+        }
+        final localAttachments = message.attachments
+            .where((attachment) => !attachment.hasRemoteIdentity)
+            .toList(growable: false);
+        if (localAttachments.isEmpty) continue;
+        final stored = await _materializeLocalAttachmentsCore(localAttachments);
+        materialized.addAll(stored);
+        var localIndex = 0;
+        final replacements = <ChatMessageAttachment>[
+          for (final attachment in message.attachments)
+            if (attachment.hasRemoteIdentity)
+              attachment
+            else
+              stored[localIndex++],
+        ];
+        final drafts = <E2eeAttachmentUploadDraft>[];
+        for (var index = 0; index < replacements.length; index++) {
+          final attachment = replacements[index];
+          if (attachment.hasRemoteIdentity) continue;
+          final original = message.attachments[index];
+          await repository.relocateLocalAssetForImport(
+            assetId: original.assetId,
+            expectedContentHash: original.contentHash,
+            expectedByteSize: original.byteSize,
+            expectedPath: original.path,
+            targetPath: attachment.path,
+          );
+          drafts.add(
+            await uploads.prepareDraft(
+              localAssetId: attachment.assetId,
+              targetRevisionId: revisionId,
+              targetOrdinal: index,
+              sourcePath: attachment.path,
+              kind: E2eeAttachmentKind.values.byName(attachment.kind),
+              totalPlaintextBytes: attachment.byteSize,
+              contentSha256: _decodeSha256Hex(attachment.contentHash),
+              displayName: attachment.displayName,
+              mediaType: attachment.mediaType,
+            ),
+          );
+          final retirement = _materializedSourceRetirements[attachment];
+          if (retirement != null &&
+              !retirements.any(
+                (existing) =>
+                    p.equals(existing.sourcePath, retirement.sourcePath),
+              )) {
+            retirements.add(retirement);
+          }
+        }
+        final now = _utcNow();
+        for (final draft in drafts) {
+          await commands.create(draft: draft, now: now);
+        }
+        created = true;
+      }
+    }
+    for (final retirement in retirements) {
+      await repository.recordMaterializedSourceRetirement(
+        retirementId: retirement.retirementId,
+        originalPath: retirement.sourcePath,
+        quarantinePath: retirement.quarantinePath,
+        createdAt: _utcNow(),
+      );
+    }
+    return (created: created, hasRetirements: retirements.isNotEmpty);
   }
 
   Future<T> _runLocalBatchCore<T>({

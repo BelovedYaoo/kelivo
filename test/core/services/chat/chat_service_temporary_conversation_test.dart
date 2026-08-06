@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
+import 'package:uuid/uuid.dart';
 // ignore: depend_on_referenced_packages
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:sqlite3/sqlite3.dart' as raw_sqlite;
@@ -58,8 +59,14 @@ class _FakePathProviderPlatform extends PathProviderPlatform {
   Future<String?> getTemporaryPath() async => '$path/tmp';
 }
 
-final class _RecordingSyncWriteExecutor implements SyncWriteExecutor {
-  final List<Set<SyncEntityKey>> batches = <Set<SyncEntityKey>>[];
+final class _RecordingSyncWriteExecutor implements ImportSyncWriteExecutor {
+  final List<List<SyncEntityKey>> batches = <List<SyncEntityKey>>[];
+  final List<List<String>> attachmentBatches = <List<String>>[];
+
+  void clear() {
+    batches.clear();
+    attachmentBatches.clear();
+  }
 
   @override
   Future<T> runLocal<T>({
@@ -74,8 +81,98 @@ final class _RecordingSyncWriteExecutor implements SyncWriteExecutor {
     required Iterable<SyncEntityKey> keys,
     required Future<T> Function() write,
   }) async {
-    batches.add(Set<SyncEntityKey>.of(keys));
+    batches.add(List<SyncEntityKey>.unmodifiable(keys));
     return write();
+  }
+
+  @override
+  Future<T> runLocalImportBatches<T>({
+    required Stream<List<SyncEntityKey>> keyBatches,
+    required Stream<List<String>> attachmentRevisionBatches,
+    required Future<T> Function() write,
+  }) async {
+    await for (final batch in keyBatches) {
+      batches.add(List<SyncEntityKey>.unmodifiable(batch));
+    }
+    final result = await write();
+    await for (final batch in attachmentRevisionBatches) {
+      attachmentBatches.add(List<String>.unmodifiable(batch));
+    }
+    return result;
+  }
+}
+
+final class _DatabaseImportSyncWriteExecutor
+    implements ImportSyncWriteExecutor {
+  _DatabaseImportSyncWriteExecutor({
+    required this.gateway,
+    required this.databaseFile,
+  });
+
+  final ChatDatabaseGateway gateway;
+  final File databaseFile;
+  final String _writerSessionId = const Uuid().v4();
+
+  @override
+  Future<T> runLocal<T>({
+    required SyncEntityKey key,
+    required Future<T> Function() write,
+  }) {
+    return runLocalBatch<T>(keys: <SyncEntityKey>[key], write: write);
+  }
+
+  @override
+  Future<T> runLocalBatch<T>({
+    required Iterable<SyncEntityKey> keys,
+    required Future<T> Function() write,
+  }) {
+    return runLocalImportBatches<T>(
+      keyBatches: Stream<List<SyncEntityKey>>.value(
+        List<SyncEntityKey>.unmodifiable(keys),
+      ),
+      attachmentRevisionBatches: const Stream<List<String>>.empty(),
+      write: write,
+    );
+  }
+
+  @override
+  Future<T> runLocalImportBatches<T>({
+    required Stream<List<SyncEntityKey>> keyBatches,
+    required Stream<List<String>> attachmentRevisionBatches,
+    required Future<T> Function() write,
+  }) async {
+    Stream<List<E2eeSyncLocalWriteIntent>> intentBatches() async* {
+      await for (final batch in keyBatches) {
+        final intents = <E2eeSyncLocalWriteIntent>[
+          for (final key in batch)
+            E2eeSyncLocalWriteIntent(
+              intentId: const Uuid().v4(),
+              entityKey: key,
+            ),
+        ];
+        if (intents.isNotEmpty) yield intents;
+      }
+    }
+
+    final lease = await gateway.acquire(databaseFile);
+    try {
+      final now = DateTime.now().toUtc();
+      final commands = await lease.repository.acquireE2eeSyncOutboxCommands(
+        now: now,
+      );
+      return commands.runLocalWriteBatchesAtomically<T>(
+        intentBatches: intentBatches(),
+        writerSessionId: _writerSessionId,
+        now: now,
+        write: () async {
+          final result = await write();
+          await attachmentRevisionBatches.drain<void>();
+          return result;
+        },
+      );
+    } finally {
+      await lease.release();
+    }
   }
 }
 
@@ -2203,6 +2300,384 @@ void main() {
         original.groupId ?? original.id,
       })).map((message) => message.attachments.single.displayName),
       containsAll(<String>['old.txt', 'new.txt']),
+    );
+  });
+
+  test('完整导入按依赖顺序生成六类有界同步批次', () async {
+    final executor = _RecordingSyncWriteExecutor();
+    final service = createService(syncWriteExecutor: executor);
+    await service.init();
+    final messages = <ChatMessage>[
+      for (var index = 0; index < 25; index++)
+        ChatMessage(
+          id: 'import-message-$index',
+          role: index.isEven ? 'user' : 'assistant',
+          content: 'content-$index',
+          conversationId: 'import-conversation',
+          groupId: 'import-group-$index',
+          turnId: 'import-turn-$index',
+          timestamp: DateTime.utc(2026, 1, 1, 0, index),
+        ),
+    ];
+    final conversation = Conversation(
+      id: 'import-conversation',
+      title: 'Imported',
+      messageIds: messages.map((message) => message.id).toList(),
+      versionSelections: const <String, int>{'import-group-0': 0},
+    );
+
+    await service.replaceAllDataFromBackup(
+      conversations: <Conversation>[conversation],
+      messages: messages,
+      toolEventsByMessageId: const <String, List<Map<String, dynamic>>>{
+        'import-message-0': <Map<String, dynamic>>[
+          <String, dynamic>{'id': 'tool'},
+        ],
+      },
+      geminiSignaturesByMessageId: const <String, String>{
+        'import-message-0': 'signature',
+      },
+    );
+
+    expect(executor.batches, hasLength(greaterThan(1)));
+    expect(
+      executor.batches.every(
+        (batch) => batch.length <= syncImportEntityBatchLimit,
+      ),
+      isTrue,
+    );
+    final keys = executor.batches.expand((batch) => batch).toList();
+    expect(keys.map((key) => key.entityType).toSet(), const <String>{
+      'conversation',
+      'turn',
+      'message',
+      'message-selection',
+      'tool-event',
+      'thought-signature',
+    });
+    const dependencyRank = <String, int>{
+      'conversation': 0,
+      'turn': 1,
+      'message': 2,
+      'message-selection': 3,
+      'tool-event': 3,
+      'thought-signature': 3,
+    };
+    final ranks = keys
+        .map((key) => dependencyRank[key.entityType]!)
+        .toList(growable: false);
+    expect(ranks, orderedEquals(List<int>.of(ranks)..sort()));
+    expect(await service.loadMessages('import-conversation'), hasLength(25));
+  });
+
+  test('覆盖导入移除附件引用和旧实体并生成认证墓碑意图', () async {
+    final executor = _RecordingSyncWriteExecutor();
+    final service = createService(syncWriteExecutor: executor);
+    await service.init();
+    final attached = ChatMessage(
+      id: 'attachment-message',
+      role: 'user',
+      content: 'with attachment',
+      conversationId: 'attachment-conversation',
+      groupId: 'attachment-group',
+      turnId: 'attachment-turn',
+      attachments: <ChatMessageAttachment>[
+        ChatMessageAttachment(
+          assetId: 'attachment-asset',
+          path: p.join(tempDir.path, 'upload', 'attachment.txt'),
+          contentHash: List<String>.filled(64, 'a').join(),
+          byteSize: 3,
+          kind: 'file',
+          displayName: 'attachment.txt',
+          mediaType: 'text/plain',
+        ),
+      ],
+    );
+    final conversation = Conversation(
+      id: 'attachment-conversation',
+      title: 'Attachment',
+      messageIds: const <String>['attachment-message'],
+      versionSelections: const <String, int>{'attachment-group': 0},
+    );
+    await service.replaceAllDataFromBackup(
+      conversations: <Conversation>[conversation],
+      messages: <ChatMessage>[attached],
+      toolEventsByMessageId: const <String, List<Map<String, dynamic>>>{},
+      geminiSignaturesByMessageId: const <String, String>{},
+    );
+
+    executor.clear();
+    await service.replaceAllDataFromBackup(
+      conversations: <Conversation>[conversation],
+      messages: <ChatMessage>[
+        attached.copyWith(
+          content: 'without attachment',
+          attachments: const <ChatMessageAttachment>[],
+        ),
+      ],
+      toolEventsByMessageId: const <String, List<Map<String, dynamic>>>{},
+      geminiSignaturesByMessageId: const <String, String>{},
+    );
+    expect(
+      (await service.loadMessages(
+        'attachment-conversation',
+      )).single.attachments,
+      isEmpty,
+    );
+    expect(
+      executor.batches.expand((batch) => batch),
+      contains(
+        const SyncEntityKey(
+          entityType: 'message',
+          entityId: 'attachment-message',
+        ),
+      ),
+    );
+
+    executor.clear();
+    await service.replaceAllDataFromBackup(
+      conversations: const <Conversation>[],
+      messages: const <ChatMessage>[],
+      toolEventsByMessageId: const <String, List<Map<String, dynamic>>>{},
+      geminiSignaturesByMessageId: const <String, String>{},
+    );
+    expect(service.getConversation('attachment-conversation'), isNull);
+    final deletedTypes = executor.batches
+        .expand((batch) => batch)
+        .map((key) => key.entityType)
+        .toSet();
+    expect(deletedTypes, const <String>{
+      'conversation',
+      'turn',
+      'message',
+      'message-selection',
+      'tool-event',
+      'thought-signature',
+    });
+  });
+
+  test('快照冲突合并为重映射实体并保留结构化附件', () async {
+    final executor = _RecordingSyncWriteExecutor();
+    final service = createService(syncWriteExecutor: executor);
+    await service.init();
+    await service.replaceAllDataFromBackup(
+      conversations: <Conversation>[
+        Conversation(
+          id: 'merge-collision',
+          title: 'Local',
+          messageIds: const <String>['local-message'],
+        ),
+      ],
+      messages: <ChatMessage>[
+        ChatMessage(
+          id: 'local-message',
+          role: 'assistant',
+          content: 'local',
+          conversationId: 'merge-collision',
+        ),
+      ],
+      toolEventsByMessageId: const <String, List<Map<String, dynamic>>>{},
+      geminiSignaturesByMessageId: const <String, String>{},
+    );
+    executor.clear();
+
+    final sourceFile = File(p.join(tempDir.path, 'merge-source.sqlite'));
+    final source = ChatDatabaseRepository.open(
+      file: sourceFile,
+      cipher: testDatabaseCipher,
+    );
+    await source.ensureReady();
+    final sourceMessage = ChatMessage(
+      id: 'source-message',
+      role: 'assistant',
+      content: 'imported',
+      conversationId: 'merge-collision',
+      groupId: 'source-group',
+      turnId: 'source-turn',
+      attachments: <ChatMessageAttachment>[
+        ChatMessageAttachment(
+          assetId: 'source-asset',
+          path: p.join(tempDir.path, 'upload', 'source.txt'),
+          contentHash: List<String>.filled(64, 'b').join(),
+          byteSize: 6,
+          kind: 'file',
+          displayName: 'source.txt',
+          mediaType: 'text/plain',
+        ),
+      ],
+    );
+    await source.putMigrationBatch(
+      conversations: <Conversation>[
+        Conversation(
+          id: 'merge-collision',
+          title: 'Imported',
+          messageIds: const <String>['source-message'],
+          versionSelections: const <String, int>{'source-group': 0},
+        ),
+      ],
+      messages: <({ChatMessage message, int messageOrder})>[
+        (message: sourceMessage, messageOrder: 0),
+      ],
+      toolEventsByMessageId: const <String, List<Map<String, dynamic>>>{
+        'source-message': <Map<String, dynamic>>[
+          <String, dynamic>{'id': 'source-tool'},
+        ],
+      },
+      geminiSignaturesByMessageId: const <String, String>{
+        'source-message': 'source-signature',
+      },
+    );
+    await source.close();
+
+    final report = await service.mergeDatabaseSnapshot(sourceFile);
+    final targetConversationId =
+        report.remappedConversationIds['merge-collision'];
+    expect(targetConversationId, isNotNull);
+    final imported = await service.loadMessages(targetConversationId!);
+    expect(imported, hasLength(1));
+    expect(imported.single.attachments.single.displayName, 'source.txt');
+    final importedKeys = executor.batches.expand((batch) => batch).toSet();
+    expect(
+      importedKeys,
+      contains(
+        SyncEntityKey(
+          entityType: 'conversation',
+          entityId: targetConversationId,
+        ),
+      ),
+    );
+    expect(
+      importedKeys,
+      contains(
+        SyncEntityKey(entityType: 'message', entityId: imported.single.id),
+      ),
+    );
+  });
+
+  test('导入业务失败时聊天写入整体回滚', () async {
+    final databaseFile = File(
+      p.join(tempDir.path, AppDatabase.databaseFileName),
+    );
+    final gateway = ChatDatabaseGateway(cipher: testDatabaseCipher);
+    final executor = _DatabaseImportSyncWriteExecutor(
+      gateway: gateway,
+      databaseFile: databaseFile,
+    );
+    final service = createService(
+      syncWriteExecutor: executor,
+      databaseGateway: gateway,
+    );
+    await service.init();
+    final committed = Conversation(
+      id: 'committed-conversation',
+      title: 'Committed',
+    );
+    await service.restoreConversation(committed, const <ChatMessage>[]);
+
+    Future<Map<String, int>> readDirtyIntents() async {
+      final lease = await gateway.acquire(databaseFile);
+      try {
+        final commands = await lease.repository.acquireE2eeSyncOutboxCommands(
+          now: DateTime.now().toUtc(),
+        );
+        return <String, int>{
+          for (final intent in await commands.listDirtyIntents(limit: 100))
+            intent.entityKey.storageKey: intent.generation,
+        };
+      } finally {
+        await lease.release();
+      }
+    }
+
+    final intentsBeforeFailure = await readDirtyIntents();
+    final conversation = Conversation(
+      id: 'rollback-conversation',
+      title: 'Rollback',
+    );
+
+    await expectLater(
+      service.runImportBatch<void>(
+        overwrite: false,
+        conversations: <Conversation>[conversation],
+        messages: const <ChatMessage>[],
+        write: () async {
+          await service.restoreConversation(
+            conversation,
+            const <ChatMessage>[],
+          );
+          throw StateError('rollback-import');
+        },
+      ),
+      throwsA(isA<StateError>()),
+    );
+
+    expect(await service.loadConversationForSync(conversation.id), isNull);
+    expect(await readDirtyIntents(), intentsBeforeFailure);
+    expect(
+      intentsBeforeFailure,
+      contains(
+        const SyncEntityKey(
+          entityType: 'conversation',
+          entityId: 'committed-conversation',
+        ).storageKey,
+      ),
+    );
+  });
+
+  test('远端 apply 不产生本地导入回声批次', () async {
+    final executor = _RecordingSyncWriteExecutor();
+    final service = createService(syncWriteExecutor: executor);
+    await service.init();
+    final conversation = Conversation(
+      id: 'remote-conversation',
+      title: 'Remote',
+      messageIds: const <String>['remote-message'],
+    );
+    final message = ChatMessage(
+      id: 'remote-message',
+      role: 'assistant',
+      content: 'remote content',
+      conversationId: conversation.id,
+      turnId: 'remote-turn',
+    );
+
+    await service.runRemoteBatch(
+      () => service.runImportBatch<void>(
+        overwrite: false,
+        conversations: <Conversation>[conversation],
+        messages: <ChatMessage>[message],
+        write: () =>
+            service.restoreConversation(conversation, <ChatMessage>[message]),
+      ),
+    );
+
+    expect(executor.batches, isEmpty);
+    expect(await service.loadMessageForSync(message.id), isNotNull);
+  });
+
+  test('数据库快照导入禁止嵌套并在获取第二次 outbox 锁前失败', () async {
+    final executor = _RecordingSyncWriteExecutor();
+    final service = createService(syncWriteExecutor: executor);
+    await service.init();
+    final snapshot = File(p.join(tempDir.path, 'nested-import.sqlite'));
+    await service.createBackupDatabaseSnapshot(snapshot);
+
+    await expectLater(
+      service
+          .runImportBatch<void>(
+            overwrite: false,
+            conversations: const <Conversation>[],
+            messages: const <ChatMessage>[],
+            write: () => service.restoreDatabaseSnapshot(snapshot),
+          )
+          .timeout(const Duration(seconds: 2)),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          '数据库快照恢复不得嵌套在另一导入事务内',
+        ),
+      ),
     );
   });
 

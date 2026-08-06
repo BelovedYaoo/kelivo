@@ -414,6 +414,245 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     return keys;
   }
 
+  Future<List<Conversation>> _loadPersistedImportConversations({
+    Iterable<String>? conversationIds,
+  }) async {
+    final conversations = <Conversation>[];
+    if (conversationIds == null) {
+      conversations.addAll(await _repo.getAllConversationSummaries());
+    } else {
+      final seen = <String>{};
+      for (final conversationId in conversationIds) {
+        if (!seen.add(conversationId)) continue;
+        final conversation = await _repo.getConversation(conversationId);
+        if (conversation != null) conversations.add(conversation);
+      }
+    }
+    return List<Conversation>.unmodifiable(conversations);
+  }
+
+  Stream<List<ChatMessage>> _persistedImportMessagePages(
+    Iterable<Conversation> conversations,
+  ) async* {
+    for (final conversation in conversations) {
+      final count = await _repo.getMessageCount(conversation.id);
+      for (var start = 0; start < count; start += syncImportEntityBatchLimit) {
+        final page = await _repo.getMessagesRange(
+          conversation.id,
+          start: start,
+          limit: syncImportEntityBatchLimit,
+        );
+        if (page.isNotEmpty) yield page;
+      }
+    }
+  }
+
+  Iterable<List<SyncEntityKey>> _partitionImportKeys(
+    Iterable<SyncEntityKey> keys,
+  ) sync* {
+    var batch = <SyncEntityKey>[];
+    for (final key in keys) {
+      if (batch.length == syncImportEntityBatchLimit) {
+        yield List<SyncEntityKey>.unmodifiable(batch);
+        batch = <SyncEntityKey>[];
+      }
+      batch.add(key);
+    }
+    if (batch.isNotEmpty) {
+      yield List<SyncEntityKey>.unmodifiable(batch);
+    }
+  }
+
+  Stream<List<SyncEntityKey>> _importKeyBatches({
+    required bool includePersisted,
+    Iterable<String>? persistedConversationIds,
+    required List<Conversation> incomingConversations,
+    required List<ChatMessage> incomingMessages,
+    Iterable<String> toolEventMessageIds = const <String>[],
+    Iterable<String> thoughtSignatureMessageIds = const <String>[],
+  }) async* {
+    final persistedConversations = includePersisted
+        ? await _loadPersistedImportConversations(
+            conversationIds: persistedConversationIds,
+          )
+        : const <Conversation>[];
+    Iterable<SyncEntityKey> conversationKeys() sync* {
+      for (final conversation in persistedConversations) {
+        yield _conversationKey(conversation.id);
+      }
+      for (final conversation in incomingConversations) {
+        yield _conversationKey(conversation.id);
+      }
+    }
+
+    Iterable<SyncEntityKey> selectionKeys() sync* {
+      for (final conversation in persistedConversations) {
+        for (final groupId in conversation.versionSelections.keys) {
+          yield _messageSelectionKey(groupId);
+        }
+      }
+      for (final conversation in incomingConversations) {
+        for (final groupId in conversation.versionSelections.keys) {
+          yield _messageSelectionKey(groupId);
+        }
+      }
+    }
+
+    Iterable<SyncEntityKey> optionalChildKeys(
+      Iterable<ChatMessage> messages,
+    ) sync* {
+      for (final message in messages) {
+        yield _toolEventKey(message.id);
+        yield _thoughtSignatureKey(message.id);
+      }
+    }
+
+    Iterable<SyncEntityKey> incomingOptionalChildKeys() sync* {
+      yield* optionalChildKeys(incomingMessages);
+      for (final messageId in toolEventMessageIds) {
+        yield _toolEventKey(messageId);
+      }
+      for (final messageId in thoughtSignatureMessageIds) {
+        yield _thoughtSignatureKey(messageId);
+      }
+    }
+
+    for (final batch in _partitionImportKeys(conversationKeys())) {
+      yield batch;
+    }
+    await for (final page in _persistedImportMessagePages(
+      persistedConversations,
+    )) {
+      for (final batch in _partitionImportKeys(
+        page.map((message) => _turnKey(message.turnId)),
+      )) {
+        yield batch;
+      }
+    }
+    for (final batch in _partitionImportKeys(
+      incomingMessages.map((message) => _turnKey(message.turnId)),
+    )) {
+      yield batch;
+    }
+    await for (final page in _persistedImportMessagePages(
+      persistedConversations,
+    )) {
+      for (final batch in _partitionImportKeys(
+        page.map((message) => _messageKey(message.id)),
+      )) {
+        yield batch;
+      }
+    }
+    for (final batch in _partitionImportKeys(
+      incomingMessages.map((message) => _messageKey(message.id)),
+    )) {
+      yield batch;
+    }
+    for (final batch in _partitionImportKeys(selectionKeys())) {
+      yield batch;
+    }
+    // 可选子记录无值时同样需要 intent，覆盖导入才能发布认证墓碑。
+    await for (final page in _persistedImportMessagePages(
+      persistedConversations,
+    )) {
+      for (final batch in _partitionImportKeys(optionalChildKeys(page))) {
+        yield batch;
+      }
+    }
+    for (final batch in _partitionImportKeys(incomingOptionalChildKeys())) {
+      yield batch;
+    }
+  }
+
+  Stream<List<String>> _incomingAttachmentRevisionBatches(
+    Iterable<ChatMessage> messages,
+  ) async* {
+    var batch = <String>[];
+    for (final message in messages) {
+      if (!message.attachments.any(
+        (attachment) => !attachment.hasRemoteIdentity,
+      )) {
+        continue;
+      }
+      if (batch.length == syncImportEntityBatchLimit) {
+        yield List<String>.unmodifiable(batch);
+        batch = <String>[];
+      }
+      batch.add(message.id);
+    }
+    if (batch.isNotEmpty) yield List<String>.unmodifiable(batch);
+  }
+
+  Stream<List<String>> _persistedAttachmentRevisionBatches([
+    Iterable<String>? conversationIds,
+  ]) async* {
+    final conversations = await _loadPersistedImportConversations(
+      conversationIds: conversationIds,
+    );
+    await for (final page in _persistedImportMessagePages(conversations)) {
+      final revisionIds = <String>[
+        for (final message in page)
+          if (message.attachments.any(
+            (attachment) => !attachment.hasRemoteIdentity,
+          ))
+            message.id,
+      ];
+      if (revisionIds.isNotEmpty) {
+        yield List<String>.unmodifiable(revisionIds);
+      }
+    }
+  }
+
+  Future<T> _runTrackedImport<T>({
+    required Stream<List<SyncEntityKey>> keyBatches,
+    required Stream<List<String>> attachmentRevisionBatches,
+    required Future<T> Function() write,
+  }) async {
+    final executor = _syncWriteExecutor;
+    if (executor is ImportSyncWriteExecutor) {
+      return executor.runLocalImportBatches<T>(
+        keyBatches: keyBatches,
+        attachmentRevisionBatches: attachmentRevisionBatches,
+        write: write,
+      );
+    }
+    return _repo.runInTransaction<T>(() async {
+      await for (final batch in keyBatches) {
+        await executor.runLocalBatch<void>(keys: batch, write: () async {});
+      }
+      return write();
+    });
+  }
+
+  Future<void> _stagePersistedImportGraph({
+    Iterable<String>? conversationIds,
+    bool prepareAttachments = true,
+  }) async {
+    if (_activeRemoteBatchContext != null) return;
+    await _runTrackedImport<void>(
+      keyBatches: _importKeyBatches(
+        includePersisted: true,
+        persistedConversationIds: conversationIds,
+        incomingConversations: const <Conversation>[],
+        incomingMessages: const <ChatMessage>[],
+      ),
+      attachmentRevisionBatches: prepareAttachments
+          ? _persistedAttachmentRevisionBatches(conversationIds)
+          : const Stream<List<String>>.empty(),
+      write: () async {},
+    );
+  }
+
+  Future<void> _wakeAfterExternalImportCommit() async {
+    final executor = _syncWriteExecutor;
+    if (executor is! ImportSyncWriteExecutor) return;
+    await executor.runLocalImportBatches<void>(
+      keyBatches: const Stream<List<SyncEntityKey>>.empty(),
+      attachmentRevisionBatches: const Stream<List<String>>.empty(),
+      write: () async {},
+    );
+  }
+
   Future<T> _runLocalMessageBatch<T>({
     required Iterable<SyncEntityKey> keys,
     required String targetRevisionId,
@@ -681,7 +920,10 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     Future<void> Function()? afterCommit,
   }) async {
     if (!_initialized) await init();
-    if (identical(Zone.current[_importBatchZoneKey], this)) return write();
+    if (identical(Zone.current[_importBatchZoneKey], this) ||
+        _activeRemoteBatchContext != null) {
+      return write();
+    }
     // 启动清理可能处理同一批资产；导入前先排空，避免文件与数据库归属并发变化。
     final startupMaintenance = _postStartupAssetMaintenanceFuture;
     if (startupMaintenance != null) {
@@ -3030,6 +3272,10 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
 
   Future<void> restoreDatabaseSnapshot(File snapshotFile) async {
     if (!_initialized) await init();
+    if (identical(Zone.current[_importBatchZoneKey], this) &&
+        _activeRemoteBatchContext == null) {
+      throw StateError('数据库快照恢复不得嵌套在另一导入事务内');
+    }
     final snapshotPath = snapshotFile.path;
     final cipher = databaseCipher;
     await Isolate.run(
@@ -3038,7 +3284,13 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
         cipher: cipher,
       ),
     );
-    await _repo.replaceBackupSnapshot(snapshotFile);
+    await _repo.replaceBackupSnapshot(
+      snapshotFile,
+      onBeforeReplace: () =>
+          _stagePersistedImportGraph(prepareAttachments: false),
+      onReplacedBeforeCommit: _stagePersistedImportGraph,
+    );
+    await _wakeAfterExternalImportCommit();
     await _resetAfterOverwriteRestore();
   }
 
@@ -3423,7 +3675,18 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
 
   Future<BackupMergeReport> mergeDatabaseSnapshot(File snapshotFile) async {
     if (!_initialized) await init();
-    final report = await _repo.mergeBackupSnapshot(snapshotFile);
+    if (identical(Zone.current[_importBatchZoneKey], this) &&
+        _activeRemoteBatchContext == null) {
+      throw StateError('数据库快照合并不得嵌套在另一导入事务内');
+    }
+    final report = await _repo.mergeBackupSnapshot(
+      snapshotFile,
+      onImportedBeforeCommit: (conversationIds) =>
+          _stagePersistedImportGraph(conversationIds: conversationIds),
+    );
+    if (report.importedConversations > 0) {
+      await _wakeAfterExternalImportCommit();
+    }
     _messagesCache.clear();
     await _loadConversationsCache();
     notifyListeners();
@@ -3444,10 +3707,19 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
 
   Future<BackupMergeReport> importPortableChats(File source) async {
     if (!_initialized) await init();
+    if (identical(Zone.current[_importBatchZoneKey], this) &&
+        _activeRemoteBatchContext == null) {
+      throw StateError('便携聊天导入不得嵌套在另一导入事务内');
+    }
     final report = await PortableNdjsonV2.importFromFile(
       target: _repo,
       source: source,
+      onImportedBeforeCommit: (conversationIds) =>
+          _stagePersistedImportGraph(conversationIds: conversationIds),
     );
+    if (report.importedConversations > 0) {
+      await _wakeAfterExternalImportCommit();
+    }
     _messagesCache.clear();
     await _loadConversationsCache();
     notifyListeners();
