@@ -177,7 +177,7 @@ final class _DatabaseImportSyncWriteExecutor
 }
 
 final class _RecordingAttachmentWriteExecutor
-    implements StructuredAttachmentSyncWriteExecutor {
+    implements StructuredAttachmentSyncWriteExecutor, ImportSyncWriteExecutor {
   _RecordingAttachmentWriteExecutor({
     this.rollbackGateway,
     this.rollbackDatabaseFile,
@@ -192,8 +192,40 @@ final class _RecordingAttachmentWriteExecutor
       <({String revisionId, List<ChatMessageAttachment> attachments})>[];
   final List<Set<SyncEntityKey>> ordinaryKeyBatches = <Set<SyncEntityKey>>[];
   final List<Set<SyncEntityKey>> attachmentKeyBatches = <Set<SyncEntityKey>>[];
+  final List<List<String>> importedRevisionBatches = <List<String>>[];
   int ordinaryBatches = 0;
   bool failAfterWrite = false;
+
+  @override
+  Future<T> runLocalImportBatches<T>({
+    required Stream<List<SyncEntityKey>> keyBatches,
+    required Stream<List<String>> attachmentRevisionBatches,
+    required Future<T> Function() write,
+  }) async {
+    await for (final batch in keyBatches) {
+      ordinaryKeyBatches.add(Set<SyncEntityKey>.of(batch));
+    }
+    await for (final batch in attachmentRevisionBatches) {
+      importedRevisionBatches.add(List<String>.of(batch));
+    }
+    if (failAfterWrite) {
+      final gateway = rollbackGateway;
+      final databaseFile = rollbackDatabaseFile;
+      if (gateway == null || databaseFile == null) {
+        throw StateError('rollback-database-missing');
+      }
+      final lease = await gateway.acquire(databaseFile);
+      try {
+        return lease.repository.runInTransaction<T>(() async {
+          await write();
+          throw StateError('attachment-draft-failed');
+        });
+      } finally {
+        await lease.release();
+      }
+    }
+    return write();
+  }
 
   @override
   Future<List<ChatMessageAttachment>> materializeLocalAttachments(
@@ -2746,8 +2778,9 @@ void main() {
       geminiSignaturesByMessageId: const <String, String>{},
     );
 
-    expect(writeExecutor.batches, hasLength(1));
-    final keys = writeExecutor.batches.single;
+    // 导入意图按实体类型分批，批次划分不是契约，key 集合才是。
+    expect(writeExecutor.batches, isNotEmpty);
+    final keys = writeExecutor.batches.expand((batch) => batch);
     expect(
       keys,
       containsAll(<SyncEntityKey>{
@@ -2822,13 +2855,17 @@ void main() {
       entityType: 'message',
       entityId: 'imported-attachment-message',
     );
-    expect(writeExecutor.ordinaryKeyBatches, isEmpty);
-    expect(writeExecutor.attachmentBatches, hasLength(1));
+    // 附件消息的 key 进入普通意图批次，附件 revision 单独成批传给执行器；
+    // 草稿创建顺序由生产运行时在 outbox 事务内保证。
     expect(
-      writeExecutor.attachmentBatches.single.revisionId,
-      'imported-attachment-message',
+      writeExecutor.ordinaryKeyBatches.expand((batch) => batch),
+      contains(messageKey),
     );
-    expect(writeExecutor.attachmentKeyBatches.single, contains(messageKey));
+    expect(writeExecutor.importedRevisionBatches, hasLength(1));
+    expect(
+      writeExecutor.importedRevisionBatches.single,
+      contains('imported-attachment-message'),
+    );
   });
 
   test('覆盖导入的附件事务提交失败时回滚聊天和缓存', () async {
@@ -2893,7 +2930,10 @@ void main() {
       ),
     );
 
-    expect(writeExecutor.attachmentBatches, hasLength(2));
+    expect(
+      writeExecutor.importedRevisionBatches.expand((batch) => batch),
+      containsAll(<String>['imported-message-1', 'imported-message-2']),
+    );
     expect(service.getConversation(oldConversation.id), isNotNull);
     expect(service.getConversation('imported-conversation'), isNull);
   });
