@@ -504,6 +504,8 @@ final class _E2eeRuntimeComposition {
     if (client is! CloudSyncDataRekeyTransport) {
       throw StateError('云同步客户端缺少账户数据换钥能力');
     }
+    // 独立接口无法通过类型提升收窄，显式转换保留运行时检查语义。
+    final dataRekeyTransport = client as CloudSyncDataRekeyTransport;
     return E2eeDeviceRevocationProductionRuntime.create(
       baseUrl: defaultCloudSyncBaseUrl,
       normalizedLoginName: currentDeviceSelfRevocation.normalizedLoginName,
@@ -512,7 +514,7 @@ final class _E2eeRuntimeComposition {
       databaseGateway: databaseGateway,
       databaseFile: databaseFile,
       rotationTransport: client,
-      dataRekeyTransport: client,
+      dataRekeyTransport: dataRekeyTransport,
       stageStore: E2eeDataRekeyStageStore(installationRoot: installationRoot),
     );
   }
@@ -886,32 +888,37 @@ class MyApp extends StatelessWidget {
                     accountRecoveryRunnerFactory: accountRecoveryRunnerFactory,
                     currentDeviceRevocationPreparer:
                         security!.currentDeviceSelfRevocation.prepare,
-                    currentDeviceRevocationCommitter: ({
-                      required CloudSyncAccountClient client,
-                      required E2eeSelfRevocationCheckpoint checkpoint,
-                    }) {
-                      if (client is! CloudSyncSelfRevocationTransport) {
-                        throw StateError('云同步客户端缺少自撤销 continuation 能力');
-                      }
-                      return security.currentDeviceSelfRevocation.submitAndPoll(
-                        transport: client,
-                        checkpoint: checkpoint,
-                      );
-                    },
-                    trustedDeviceRevocationCommitter: ({
-                      required CloudSyncAccountClient client,
-                      required CloudSyncAccountSession session,
-                      required String operationId,
-                      required String revokedDeviceId,
-                    }) {
-                      return security
-                          .revocationRuntimeFor(client)
-                          .revokeDirect(
-                            session: session,
-                            operationId: operationId,
-                            revokedDeviceId: revokedDeviceId,
-                          );
-                    },
+                    currentDeviceRevocationCommitter:
+                        ({
+                          required CloudSyncAccountClient client,
+                          required E2eeSelfRevocationCheckpoint checkpoint,
+                        }) {
+                          if (client is! CloudSyncSelfRevocationTransport) {
+                            throw StateError('云同步客户端缺少自撤销 continuation 能力');
+                          }
+                          final transport =
+                              client as CloudSyncSelfRevocationTransport;
+                          return security.currentDeviceSelfRevocation
+                              .submitAndPoll(
+                                transport: transport,
+                                checkpoint: checkpoint,
+                              );
+                        },
+                    trustedDeviceRevocationCommitter:
+                        ({
+                          required CloudSyncAccountClient client,
+                          required CloudSyncAccountSession session,
+                          required String operationId,
+                          required String revokedDeviceId,
+                        }) {
+                          return security
+                              .revocationRuntimeFor(client)
+                              .revokeDirect(
+                                session: session,
+                                operationId: operationId,
+                                revokedDeviceId: revokedDeviceId,
+                              );
+                        },
                     stopBackgroundSync: () =>
                         mobileBackgroundSyncScheduler.setEnabled(false),
                     restartForLocalDeviceWipe: PlatformUtils.restartApp,

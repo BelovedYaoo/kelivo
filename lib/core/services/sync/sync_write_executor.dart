@@ -26,6 +26,8 @@ final class StructuredMessageAttachmentSyncTarget {
 
   final String targetRevisionId;
   final List<ChatMessageAttachment> attachments;
+}
+
 /// 大型导入按固定上限分批准备意图，但所有批次与业务写入仍共用一个事务。
 abstract interface class ImportSyncWriteExecutor implements SyncWriteExecutor {
   Future<T> runLocalImportBatches<T>({

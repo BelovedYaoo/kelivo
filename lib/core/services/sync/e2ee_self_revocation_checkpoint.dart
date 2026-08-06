@@ -101,9 +101,7 @@ final class E2eeSelfRevocationCheckpointStore {
   static const _slotDomain = 'kelivo.self-revocation.checkpoint.slot.v1';
   static const _recordDomain = 'kelivo.self-revocation.checkpoint.record.v1';
   static const _aadDomain = 'kelivo.self-revocation.checkpoint.aad.v1';
-  static final Uint8List _magic = Uint8List.fromList(
-    ascii.encode('KELVSR01'),
-  );
+  static final Uint8List _magic = Uint8List.fromList(ascii.encode('KELVSR01'));
   static final RegExp _uuidPattern = RegExp(
     r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
   );
@@ -134,7 +132,7 @@ final class E2eeSelfRevocationCheckpointStore {
       if (plaintext.length > _maximumPlaintextBytes) {
         throw const FormatException('自撤销 checkpoint 明文超过协议上限');
       }
-      envelope = await _withKey(
+      envelope = await _withKey<Uint8List>(
         mutationId,
         createMissing: true,
         action: (key) => _secureCore.sealRecord(
@@ -150,6 +148,9 @@ final class E2eeSelfRevocationCheckpointStore {
       );
       final frame = _encodeFrame(envelope);
       final directory = await _requireDirectory(create: true);
+      if (directory == null) {
+        throw StateError('自撤销 checkpoint 目录创建失败');
+      }
       temporary = File(
         p.join(directory.path, '.$mutationId-${_randomHex(16)}.next'),
       );
@@ -198,7 +199,7 @@ final class E2eeSelfRevocationCheckpointStore {
     Uint8List? plaintext;
     try {
       envelope = _decodeFrame(frame);
-      plaintext = await _withKey(
+      plaintext = await _withKey<Uint8List>(
         mutationId,
         createMissing: false,
         action: (key) => _secureCore.openRecord(
@@ -225,23 +226,24 @@ final class E2eeSelfRevocationCheckpointStore {
     }
   }
 
+  Future<KelivoKeyHandle> _openOrCreateKeySlot(Uint8List slotId) async {
+    try {
+      return await _secureCore.createSlot(slotId);
+    } on KelivoSecureCoreException catch (error) {
+      if (error.status != KelivoSecureCoreStatus.slotAlreadyExists) rethrow;
+      return await _secureCore.openSlot(slotId);
+    }
+  }
+
   Future<T> _withKey<T>(
     String mutationId, {
     required bool createMissing,
     required Future<T> Function(KelivoKeyHandle key) action,
   }) async {
     final slotId = _identifier(_slotDomain, mutationId);
-    final KelivoKeyHandle key;
-    if (createMissing) {
-      try {
-        key = await _secureCore.createSlot(slotId);
-      } on KelivoSecureCoreException catch (error) {
-        if (error.status != KelivoSecureCoreStatus.slotAlreadyExists) rethrow;
-        key = await _secureCore.openSlot(slotId);
-      }
-    } else {
-      key = await _secureCore.openSlot(slotId);
-    }
+    final key = createMissing
+        ? await _openOrCreateKeySlot(slotId)
+        : await _secureCore.openSlot(slotId);
     Object? primaryError;
     StackTrace? primaryStackTrace;
     T? result;
@@ -274,7 +276,10 @@ final class E2eeSelfRevocationCheckpointStore {
       throw StateError('自撤销 checkpoint 安装根目录无效');
     }
     final directory = Directory(p.join(_installationRoot.path, _directoryName));
-    final type = await FileSystemEntity.type(directory.path, followLinks: false);
+    final type = await FileSystemEntity.type(
+      directory.path,
+      followLinks: false,
+    );
     if (type == FileSystemEntityType.notFound) {
       if (!create) return null;
       await directory.create();
@@ -331,7 +336,12 @@ E2eeSelfRevocationCheckpoint _decode(Uint8List plaintext) {
   } on FormatException {
     throw const FormatException('自撤销 checkpoint JSON 无效');
   }
-  final root = _exactMap(decoded, <String>{'version', 'session', 'request', 'trustedHead'});
+  final root = _exactMap(decoded, <String>{
+    'version',
+    'session',
+    'request',
+    'trustedHead',
+  });
   if (root['version'] != 1) {
     throw const FormatException('自撤销 checkpoint 版本无效');
   }
@@ -384,33 +394,46 @@ E2eeSelfRevocationCheckpoint _decode(Uint8List plaintext) {
       'manifest',
       maximumLength: e2eeAccountTrustManifestMaximumLength,
     ),
-    trustedHeadManifestDigest: _binary(
-      head,
-      'manifestDigest',
-      exactLength: 32,
-    ),
+    trustedHeadManifestDigest: _binary(head, 'manifestDigest', exactLength: 32),
     trustedHeadSecurityGeneration: _integer(head, 'securityGeneration'),
     trustedHeadKeyEpoch: _integer(head, 'keyEpoch'),
   );
 }
 
 Uint8List _encodeFrame(Uint8List envelope) {
-  if (envelope.isEmpty || envelope.length > E2eeSelfRevocationCheckpointStore._maximumEnvelopeBytes) {
+  if (envelope.isEmpty ||
+      envelope.length >
+          E2eeSelfRevocationCheckpointStore._maximumEnvelopeBytes) {
     throw const FormatException('自撤销 checkpoint 密文长度无效');
   }
-  final frame = Uint8List(E2eeSelfRevocationCheckpointStore._headerLength + envelope.length);
-  frame.setRange(0, E2eeSelfRevocationCheckpointStore._magic.length, E2eeSelfRevocationCheckpointStore._magic);
+  final frame = Uint8List(
+    E2eeSelfRevocationCheckpointStore._headerLength + envelope.length,
+  );
+  frame.setRange(
+    0,
+    E2eeSelfRevocationCheckpointStore._magic.length,
+    E2eeSelfRevocationCheckpointStore._magic,
+  );
   final fields = ByteData.sublistView(frame);
   fields.setUint32(8, E2eeSelfRevocationCheckpointStore._version, Endian.big);
   fields.setUint32(12, envelope.length, Endian.big);
-  frame.setRange(E2eeSelfRevocationCheckpointStore._headerLength, frame.length, envelope);
+  frame.setRange(
+    E2eeSelfRevocationCheckpointStore._headerLength,
+    frame.length,
+    envelope,
+  );
   return frame;
 }
 
 Uint8List _decodeFrame(Uint8List frame) {
   if (frame.length < E2eeSelfRevocationCheckpointStore._headerLength ||
-      frame.length > E2eeSelfRevocationCheckpointStore._headerLength + E2eeSelfRevocationCheckpointStore._maximumEnvelopeBytes ||
-      !_sameBytes(frame.sublist(0, 8), E2eeSelfRevocationCheckpointStore._magic)) {
+      frame.length >
+          E2eeSelfRevocationCheckpointStore._headerLength +
+              E2eeSelfRevocationCheckpointStore._maximumEnvelopeBytes ||
+      !_sameBytes(
+        frame.sublist(0, 8),
+        E2eeSelfRevocationCheckpointStore._magic,
+      )) {
     throw const FormatException('自撤销 checkpoint 帧无效');
   }
   final fields = ByteData.sublistView(frame);
@@ -419,21 +442,33 @@ Uint8List _decodeFrame(Uint8List frame) {
   if (version != E2eeSelfRevocationCheckpointStore._version ||
       length < 1 ||
       length > E2eeSelfRevocationCheckpointStore._maximumEnvelopeBytes ||
-      frame.length != E2eeSelfRevocationCheckpointStore._headerLength + length) {
+      frame.length !=
+          E2eeSelfRevocationCheckpointStore._headerLength + length) {
     throw const FormatException('自撤销 checkpoint 帧头无效');
   }
-  return Uint8List.sublistView(frame, E2eeSelfRevocationCheckpointStore._headerLength);
+  return Uint8List.sublistView(
+    frame,
+    E2eeSelfRevocationCheckpointStore._headerLength,
+  );
 }
 
 Uint8List _identifier(String domain, String mutationId) {
   return Uint8List.fromList(
-    sha256.convert(utf8.encode('$domain\u0000$mutationId')).bytes.sublist(0, 16),
+    sha256
+        .convert(utf8.encode('$domain\u0000$mutationId'))
+        .bytes
+        .sublist(0, 16),
   );
 }
 
-Uint8List _associatedData({required String deviceId, required String mutationId}) {
+Uint8List _associatedData({
+  required String deviceId,
+  required String mutationId,
+}) {
   return Uint8List.fromList(
-    utf8.encode('${E2eeSelfRevocationCheckpointStore._aadDomain}\u0000$deviceId\u0000$mutationId'),
+    utf8.encode(
+      '${E2eeSelfRevocationCheckpointStore._aadDomain}\u0000$deviceId\u0000$mutationId',
+    ),
   );
 }
 
@@ -469,7 +504,8 @@ DateTime _timestamp(Map<String, Object?> json, String field) {
   return parsed;
 }
 
-String _encodeBinary(List<int> value) => base64Url.encode(value).replaceAll('=', '');
+String _encodeBinary(List<int> value) =>
+    base64Url.encode(value).replaceAll('=', '');
 
 Uint8List _binary(
   Map<String, Object?> json,

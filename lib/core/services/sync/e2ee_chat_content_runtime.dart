@@ -1201,7 +1201,7 @@ final class E2eeChatContentRuntime
       );
       if (hasAttachmentUploadWork) _markAttachmentUploadWork();
       if (hasMaterializedSourceRetirements) {
-        _scheduleMaterializedSourceRetirement();
+        _scheduleAssetMaintenance();
       }
       if (_state == E2eeChatContentRuntimeState.ready) {
         _scheduler?.wake();
@@ -1245,6 +1245,12 @@ final class E2eeChatContentRuntime
             .where((attachment) => !attachment.hasRemoteIdentity)
             .toList(growable: false);
         if (localAttachments.isEmpty) continue;
+        // 缺失源文件是导入数据错误而非 IO 故障，失败时整体回滚，不发布幽灵意图。
+        for (final attachment in localAttachments) {
+          if (!File(attachment.path).existsSync()) {
+            throw StateError('导入附件源文件缺失：${attachment.path}');
+          }
+        }
         final stored = await _materializeLocalAttachmentsCore(localAttachments);
         materialized.addAll(stored);
         var localIndex = 0;
@@ -1270,8 +1276,10 @@ final class E2eeChatContentRuntime
           drafts.add(
             await uploads.prepareDraft(
               localAssetId: attachment.assetId,
-              targetRevisionId: revisionId,
-              targetOrdinal: index,
+              target: E2eeMessageAttachmentUploadTarget(
+                revisionId: revisionId,
+                ordinal: index,
+              ),
               sourcePath: attachment.path,
               kind: E2eeAttachmentKind.values.byName(attachment.kind),
               totalPlaintextBytes: attachment.byteSize,

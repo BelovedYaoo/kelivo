@@ -56,6 +56,20 @@ final class LoadedTimelinePage {
 
 typedef AssetContentHash = Future<String> Function(File file);
 
+/// 在后台 isolate 中准备快照以供恢复；顶层函数保证闭包不捕获实例成员。
+Future<void> _prepareSnapshotForRestoreInBackground(
+  File snapshotFile,
+  DatabaseCipher cipher,
+) async {
+  final snapshotPath = snapshotFile.path;
+  await Isolate.run(
+    () => ChatDatabaseRepository.prepareSnapshotForRestore(
+      File(snapshotPath),
+      cipher: cipher,
+    ),
+  );
+}
+
 typedef BackupAttachmentDirectoryMapping = ({
   Directory uploadDirectory,
   Directory imagesDirectory,
@@ -929,94 +943,36 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     if (startupMaintenance != null) {
       await startupMaintenance;
     }
-    final conversationList = conversations.toList(growable: false);
-    final messageList = messages.toList(growable: false);
-    final attachmentMessageList = localAttachmentMessages.toList(
-      growable: false,
-    );
-    final keys = <SyncEntityKey>{};
-    if (overwrite) {
-      keys.addAll(await _allPersistedChatSyncKeys());
-    }
-    for (final conversation in conversationList) {
-      keys.add(_conversationKey(conversation.id));
-      keys.addAll(
-        conversation.versionSelections.keys.map(_messageSelectionKey),
-      );
-    }
-    for (final message in messageList) {
-      keys
-        ..add(_turnKey(message.turnId))
-        ..add(_messageKey(message.id))
-        ..add(_toolEventKey(message.id))
-        ..add(_thoughtSignatureKey(message.id));
-    }
-    keys.addAll(toolEventMessageIds.map(_toolEventKey));
-    keys.addAll(thoughtSignatureMessageIds.map(_thoughtSignatureKey));
-
-    Future<T> apply() => _repo.runInTransaction(write);
-    Future<T> runSynchronizedImport() {
-      final executor = _syncWriteExecutor;
-      if (attachmentMessageList.isEmpty ||
-          executor is! StructuredAttachmentSyncWriteExecutor) {
-        return executor.runLocalBatch<T>(keys: keys, write: apply);
-      }
-      return executor.runLocalBatchWithMessageAttachments<T>(
-        keys: keys,
-        targets: <StructuredMessageAttachmentSyncTarget>[
-          for (final message in attachmentMessageList)
-            StructuredMessageAttachmentSyncTarget(
-              targetRevisionId: message.id,
-              attachments: message.attachments,
-            ),
-        ],
-        targetWasPersisted: (_) => true,
-        write: apply,
-      );
-    }
-
-    return runNotificationBatch<T>(() async {
-      var completed = false;
+    final incomingConversations = conversations.toList(growable: false);
+    final incomingMessages = messages.toList(growable: false);
+    Future<T> apply() => runNotificationBatch<T>(() async {
+      var committed = false;
       try {
-        final result = await runZoned<Future<T>>(
-          runSynchronizedImport,
-          zoneValues: <Object?, Object?>{_importBatchZoneKey: this},
+        final result = await _runTrackedImport<T>(
+          keyBatches: _importKeyBatches(
+            includePersisted: overwrite,
+            incomingConversations: incomingConversations,
+            incomingMessages: incomingMessages,
+            toolEventMessageIds: toolEventMessageIds,
+            thoughtSignatureMessageIds: thoughtSignatureMessageIds,
+          ),
+          attachmentRevisionBatches: _incomingAttachmentRevisionBatches(
+            incomingMessages,
+          ),
+          write: () => _repo.runInTransaction(write),
         );
         await afterCommit?.call();
-        completed = true;
+        committed = true;
         return result;
       } finally {
-        if (!completed) await _refreshPersistedCachesAfterRemoteBatch();
+        if (!committed) await _refreshPersistedCachesAfterRemoteBatch();
         notifyListeners();
       }
     });
-  }
-
-  Future<Set<SyncEntityKey>> _allPersistedChatSyncKeys() async {
-    final keys = <SyncEntityKey>{};
-    final conversations = await _repo.getAllConversationSummaries();
-    for (final conversation in conversations) {
-      keys.add(_conversationKey(conversation.id));
-      keys.addAll(
-        conversation.versionSelections.keys.map(_messageSelectionKey),
-      );
-      final turns = await _repo.getTurnCreatedAts(conversation.id);
-      keys.addAll(turns.keys.map(_turnKey));
-      final count = await _repo.getMessageCount(conversation.id);
-      if (count == 0) continue;
-      final messages = await _repo.getMessagesRange(
-        conversation.id,
-        start: 0,
-        limit: count,
-      );
-      for (final message in messages) {
-        keys
-          ..add(_messageKey(message.id))
-          ..add(_toolEventKey(message.id))
-          ..add(_thoughtSignatureKey(message.id));
-      }
-    }
-    return keys;
+    return runZoned<Future<T>>(
+      apply,
+      zoneValues: <Object?, Object?>{_importBatchZoneKey: this},
+    );
   }
 
   Future<Conversation> upsertConversationFromSync(Conversation incoming) {
@@ -3276,14 +3232,9 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
         _activeRemoteBatchContext == null) {
       throw StateError('数据库快照恢复不得嵌套在另一导入事务内');
     }
-    final snapshotPath = snapshotFile.path;
-    final cipher = databaseCipher;
-    await Isolate.run(
-      () => ChatDatabaseRepository.prepareSnapshotForRestore(
-        File(snapshotPath),
-        cipher: cipher,
-      ),
-    );
+    // Isolate.run 闭包不能与捕获 this 的回调闭包共享上下文，否则会被判定为不可发送；
+    // 快照准备放在顶层辅助函数中，避免任何实例成员进入 isolate 消息。
+    await _prepareSnapshotForRestoreInBackground(snapshotFile, databaseCipher);
     await _repo.replaceBackupSnapshot(
       snapshotFile,
       onBeforeReplace: () =>
