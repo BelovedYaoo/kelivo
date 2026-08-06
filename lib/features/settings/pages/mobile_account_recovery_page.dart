@@ -383,6 +383,10 @@ final class _MobileAccountRecoveryPageState
     setState(() => _submitting = true);
     final provider = context.read<CloudSyncProvider>();
     final recovered = await provider.startAccountRecovery(command);
+    debugPrint(
+      'MOBILE_RECOVERY_SUBMIT: recovered=$recovered '
+      'lastError=${provider.lastError}',
+    );
     if (!mounted) return;
     setState(() => _submitting = false);
     if (recovered) {

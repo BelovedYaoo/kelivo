@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:developer' as developer;
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:kelivo_secure_core/kelivo_secure_core.dart';
@@ -525,6 +526,7 @@ final class CloudSyncProvider extends ChangeNotifier
     CloudSyncAccountClient? recoveryClient;
     CloudSyncAccountSession? boundSession;
     Object? failure;
+    StackTrace? failureStackTrace;
     var completed = false;
     var mutationStarted = false;
     var workspaceAcknowledged = false;
@@ -588,8 +590,11 @@ final class CloudSyncProvider extends ChangeNotifier
       if (boundSession == null) return false;
       await runner.acknowledgeWorkspaceBound();
       workspaceAcknowledged = true;
-    } catch (error) {
+    } catch (error, stackTrace) {
       failure = error;
+      failureStackTrace = stackTrace;
+      debugPrint('CLOUD_SYNC_ACCOUNT_RECOVERY_FAILED_ERROR: $error');
+      debugPrint('CLOUD_SYNC_ACCOUNT_RECOVERY_FAILED_STACK: $stackTrace');
     } finally {
       command.dispose();
       try {
@@ -619,7 +624,11 @@ final class CloudSyncProvider extends ChangeNotifier
 
     if (failure != null) {
       _accountRecoveryProgress = E2eeAccountRecoveryProgress.failed;
-      _lastError = _normalizeFailure(failure);
+      final normalizedError = _normalizeFailure(failure);
+      _lastError = normalizedError;
+      debugPrint('CLOUD_SYNC_ACCOUNT_RECOVERY_NORMALIZED: '
+          '${normalizedError.kind} code=${normalizedError.serverCode} '
+          'status=${normalizedError.statusCode}');
       if (workspaceAcknowledged || _pendingAccountRecoveryRunner != null) {
         _workspaceRestartRequired = true;
         _status = CloudSyncProviderStatus.workspaceChangePending;

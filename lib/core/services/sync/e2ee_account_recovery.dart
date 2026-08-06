@@ -3694,11 +3694,16 @@ Uint8List _fixedBytes(Uint8List value, int length, String field) {
 
 Uint8List _fixedMutableBytes(Uint8List value, int length, String field) {
   if (value.length != length) {
-    value.fillRange(0, value.length, 0);
     throw FormatException('$field 长度必须为 $length 字节');
   }
   final copy = Uint8List.fromList(value);
-  value.fillRange(0, value.length, 0);
+  // Native 绑定层可能返回不可变视图（asUnmodifiableView）；清零只对
+  // 可写缓冲区执行，不可变视图的生命周期由创建方（绑定层）负责。
+  try {
+    value.fillRange(0, value.length, 0);
+  } on UnsupportedError {
+    // 不可变视图：跳过原地清零，拷贝已隔离敏感内容。
+  }
   return copy;
 }
 
@@ -3731,5 +3736,10 @@ bool _sameBytes(Uint8List left, Uint8List right) {
 }
 
 void _clear(Uint8List? value) {
-  value?.fillRange(0, value.length, 0);
+  if (value == null) return;
+  try {
+    value.fillRange(0, value.length, 0);
+  } on UnsupportedError {
+    // 不可变视图（native 绑定输出）：由创建方管理生命周期。
+  }
 }

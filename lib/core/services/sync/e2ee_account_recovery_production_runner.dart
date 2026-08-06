@@ -2520,6 +2520,37 @@ void _requireNativePrepared({
     clearSensitiveBytes(manifestDigest);
     clearSensitiveBytes(expectedDeviceId);
     clearSensitiveBytes(expectedRekeyOperationId);
+    // 诊断：记录绑定字段差异，便于定位服务端/密码学不匹配。
+    print(
+      'RECOVERY_BINDING_MISMATCH: kind=$kind prepared.kind=${prepared.kind} '
+      'expGen=$expectedGeneration pGen=${prepared.expectedGeneration} '
+      'expEpoch=$expectedKeyEpoch pEpoch=${prepared.expectedKeyEpoch} '
+      'expNextGen=${expectedGeneration + 1} pNextGen=${prepared.nextGeneration} '
+      'expNextEpoch=$expectedTargetKeyEpoch pNextEpoch=${prepared.nextKeyEpoch} '
+      'capExp=$expectedCapsuleVersion cap=${prepared.nextRecoveryCapsuleVersion} '
+      'hasCap=${prepared.recoveryCapsule != null} '
+      'reqDigest=${_sameRecoveryBytes(
+        prepared.requestDigest,
+        expectedRequestDigest,
+      )} '
+      'manifest=${_sameRecoveryBytes(prepared.manifestDigest, manifestDigest)} '
+      'bKind=${binding.kind} bPhase=${binding.dataPhase} '
+      'srcEp=${binding.sourceKeyEpoch} exp=$expectedSourceKeyEpoch '
+      'tgtEp=${binding.targetKeyEpoch} exp=$expectedTargetKeyEpoch '
+      'srcGen=${binding.sourceDataGeneration} exp=$expectedSourceDataGeneration '
+      'tgtGen=${binding.targetDataGeneration} '
+      'exp=${expectedSourceDataGeneration + 1} '
+      'memGen=${binding.membershipGeneration} exp=${expectedGeneration + 1} '
+      'memDigestLen=${binding.membershipManifestDigest.length} '
+      'expLen=$cloudSyncMembershipManifestDigestBytes '
+      'devId=${_sameRecoveryBytes(binding.deviceId, expectedDeviceId)} '
+      'rekey=${_sameRecoveryBytes(
+        binding.rekeyOperationId,
+        expectedRekeyOperationId,
+      )} '
+      'devKeyVer=${binding.deviceKeyVersion} '
+      'challenge=${replacementChallenge?.deviceKeyVersion}',
+    );
     throw const FormatException('账户恢复 Native prepared 绑定不一致');
   }
   clearSensitiveBytes(manifestDigest);
