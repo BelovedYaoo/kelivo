@@ -6,6 +6,7 @@ import 'package:Kelivo/core/database/app_database.dart';
 import 'package:Kelivo/core/database/chat_database_gateway.dart';
 import 'package:Kelivo/core/database/chat_database_repository.dart';
 import 'package:Kelivo/core/models/chat_message.dart';
+import 'package:Kelivo/core/models/conversation.dart';
 import 'package:Kelivo/core/providers/assistant_provider.dart';
 import 'package:Kelivo/core/providers/cloud_sync_provider.dart';
 import 'package:Kelivo/core/providers/instruction_injection_provider.dart';
@@ -4641,6 +4642,194 @@ void main() {
     await _waitUntil(() => !source.existsSync());
     expect(File(materializedPath).existsSync(), isTrue);
     await instance.runtime.close();
+  });
+
+  test('E2EE 聊天导入物化本地附件并原子建立上传草稿', () async {
+    final harness = await _E2eeRuntimeHarness.create();
+    addTearDown(harness.close);
+    final instance = harness.createInstance(blockInitialPull: true);
+    await instance.runtime.initialize().timeout(const Duration(seconds: 15));
+    await _waitUntil(() => instance.pull.pullCalls == 1);
+
+    final uploadDirectory = await AppDirectories.getUploadDirectory();
+    await uploadDirectory.create(recursive: true);
+    final source = File(
+      '${uploadDirectory.path}${Platform.pathSeparator}import-attachment.txt',
+    );
+    final bytes = utf8.encode('import attachment payload');
+    await source.writeAsBytes(bytes, flush: true);
+    final attachment = ChatMessageAttachment(
+      assetId: 'import-attachment-asset',
+      path: source.path,
+      contentHash: sha256.convert(bytes).toString(),
+      byteSize: bytes.length,
+      kind: 'file',
+      displayName: 'import-attachment.txt',
+      mediaType: 'text/plain',
+    );
+    final message = ChatMessage(
+      id: 'import-attachment-message',
+      role: 'user',
+      content: '导入附件',
+      conversationId: 'import-attachment-conversation',
+      turnId: 'import-attachment-turn',
+      attachments: <ChatMessageAttachment>[attachment],
+    );
+    final conversation = Conversation(
+      id: message.conversationId,
+      title: '导入附件',
+      messageIds: <String>[message.id],
+    );
+
+    await instance.chatService.runImportBatch<void>(
+      overwrite: false,
+      conversations: <Conversation>[conversation],
+      messages: <ChatMessage>[message],
+      write: () => instance.chatService.restoreConversation(
+        conversation,
+        <ChatMessage>[message],
+      ),
+    );
+
+    final persisted = await instance.chatService.loadMessageForSync(message.id);
+    expect(persisted, isNotNull);
+    expect(persisted!.attachments.single.path, isNot(source.path));
+    expect(await File(persisted.attachments.single.path).exists(), isTrue);
+    final inspectionLease = await harness._databaseGateway.acquire(
+      harness._databaseFile,
+    );
+    try {
+      expect(
+        await inspectionLease.repository.e2eeAttachmentUploadCommands
+            .hasRetryableWork(),
+        isTrue,
+      );
+      final outbox = await inspectionLease.repository
+          .acquireE2eeSyncOutboxCommands(now: DateTime.now().toUtc());
+      expect(
+        (await outbox.listDirtyIntents(
+          limit: 100,
+        )).map((intent) => intent.entityKey),
+        contains(
+          const SyncEntityKey(
+            entityType: E2eeSyncChatRecordTypes.message,
+            entityId: 'import-attachment-message',
+          ),
+        ),
+      );
+    } finally {
+      await inspectionLease.release();
+    }
+    expect(instance.attachments.createCalls, 0);
+
+    instance.pull.releaseBlockedPull();
+    await _waitUntil(() => instance.attachments.commitCalls == 1);
+    await _waitUntil(() => instance.records.pushCalls >= 1);
+    final committed = await instance.chatService.loadMessageForSync(message.id);
+    expect(committed!.attachments.single.hasRemoteIdentity, isTrue);
+    expect(
+      instance.transportEvents.indexOf('attachment-commit'),
+      lessThan(instance.transportEvents.indexOf('push')),
+    );
+  });
+
+  test('E2EE 附件导入失败时消息、dirty intent 与上传草稿整体回滚', () async {
+    final harness = await _E2eeRuntimeHarness.create();
+    addTearDown(harness.close);
+    final instance = harness.createInstance(blockInitialPull: true);
+    await instance.runtime.initialize().timeout(const Duration(seconds: 15));
+    await _waitUntil(() => instance.pull.pullCalls == 1);
+
+    final uploadDirectory = await AppDirectories.getUploadDirectory();
+    final source = File(
+      '${uploadDirectory.path}${Platform.pathSeparator}failed-import.txt',
+    );
+    final bytes = utf8.encode('failed import attachment');
+    await source.writeAsBytes(bytes, flush: true);
+    final message = ChatMessage(
+      id: 'failed-import-message',
+      role: 'user',
+      content: '失败导入',
+      conversationId: 'failed-import-conversation',
+      turnId: 'failed-import-turn',
+      attachments: <ChatMessageAttachment>[
+        ChatMessageAttachment(
+          assetId: 'failed-import-asset',
+          path: source.path,
+          contentHash: sha256.convert(bytes).toString(),
+          byteSize: bytes.length,
+          kind: 'file',
+          displayName: 'failed-import.txt',
+          mediaType: 'text/plain',
+        ),
+      ],
+    );
+    final missingMessage = ChatMessage(
+      id: 'failed-import-missing-message',
+      role: 'assistant',
+      content: '缺失附件',
+      conversationId: message.conversationId,
+      turnId: 'failed-import-turn',
+      attachments: <ChatMessageAttachment>[
+        ChatMessageAttachment(
+          assetId: 'failed-import-missing-asset',
+          path: '${uploadDirectory.path}${Platform.pathSeparator}missing.txt',
+          contentHash: List<String>.filled(64, 'c').join(),
+          byteSize: 1,
+          kind: 'file',
+          displayName: 'missing.txt',
+          mediaType: 'text/plain',
+        ),
+      ],
+    );
+    final conversation = Conversation(
+      id: message.conversationId,
+      title: '失败导入',
+      messageIds: <String>[message.id, missingMessage.id],
+    );
+
+    await expectLater(
+      instance.chatService.runImportBatch<void>(
+        overwrite: false,
+        conversations: <Conversation>[conversation],
+        messages: <ChatMessage>[message, missingMessage],
+        write: () => instance.chatService.restoreConversation(
+          conversation,
+          <ChatMessage>[message, missingMessage],
+        ),
+      ),
+      throwsA(isA<StateError>()),
+    );
+
+    expect(await instance.chatService.loadMessageForSync(message.id), isNull);
+    final inspectionLease = await harness._databaseGateway.acquire(
+      harness._databaseFile,
+    );
+    try {
+      expect(
+        await inspectionLease.repository.e2eeAttachmentUploadCommands
+            .hasRetryableWork(),
+        isFalse,
+      );
+      final outbox = await inspectionLease.repository
+          .acquireE2eeSyncOutboxCommands(now: DateTime.now().toUtc());
+      expect(
+        (await outbox.listDirtyIntents(
+          limit: 100,
+        )).map((intent) => intent.entityKey),
+        isNot(
+          contains(
+            const SyncEntityKey(
+              entityType: E2eeSyncChatRecordTypes.message,
+              entityId: 'failed-import-message',
+            ),
+          ),
+        ),
+      );
+    } finally {
+      await inspectionLease.release();
+    }
+    expect(await source.exists(), isTrue);
   });
 
   test('E2EE 附件消息事务回滚保留受管源文件且重启清理无引用副本', () async {

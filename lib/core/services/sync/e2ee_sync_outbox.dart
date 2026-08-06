@@ -211,6 +211,50 @@ final class E2eeSyncOutbox implements SyncWriteExecutor {
     });
   }
 
+  Future<T> runLocalImportBatches<T>({
+    required Stream<List<SyncEntityKey>> keyBatches,
+    required Future<T> Function() write,
+  }) {
+    return _runWhileOpen<T>(() {
+      return _localWriteLock.run(() async {
+        Stream<List<E2eeSyncLocalWriteIntent>> intentBatches() async* {
+          await for (final sourceBatch in keyBatches) {
+            if (sourceBatch.length > syncImportEntityBatchLimit) {
+              throw RangeError.range(
+                sourceBatch.length,
+                0,
+                syncImportEntityBatchLimit,
+                'keyBatch.length',
+              );
+            }
+            final seenKeys = <String>{};
+            final intents = <E2eeSyncLocalWriteIntent>[];
+            for (final key in sourceBatch) {
+              validateSyncEntityKey(key);
+              if (!seenKeys.add(key.storageKey)) continue;
+              intents.add(
+                E2eeSyncLocalWriteIntent(
+                  intentId: const Uuid().v4(),
+                  entityKey: key,
+                ),
+              );
+            }
+            if (intents.isNotEmpty) {
+              yield List<E2eeSyncLocalWriteIntent>.unmodifiable(intents);
+            }
+          }
+        }
+
+        return _commands.runLocalWriteBatchesAtomically<T>(
+          intentBatches: intentBatches(),
+          writerSessionId: _processSessionId,
+          now: _now(),
+          write: write,
+        );
+      });
+    });
+  }
+
   Future<E2eeSyncSealStatus> sealNext({
     required E2eeSyncSnapshotReader readSnapshot,
   }) {

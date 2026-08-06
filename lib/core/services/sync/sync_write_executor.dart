@@ -1,5 +1,9 @@
+import 'dart:async';
+
 import '../../models/chat_message.dart';
 import 'sync_codec.dart';
+
+const int syncImportEntityBatchLimit = 100;
 
 abstract interface class SyncWriteExecutor {
   Future<T> runLocal<T>({
@@ -9,6 +13,15 @@ abstract interface class SyncWriteExecutor {
 
   Future<T> runLocalBatch<T>({
     required Iterable<SyncEntityKey> keys,
+    required Future<T> Function() write,
+  });
+}
+
+/// 大型导入按固定上限分批准备意图，但所有批次与业务写入仍共用一个事务。
+abstract interface class ImportSyncWriteExecutor implements SyncWriteExecutor {
+  Future<T> runLocalImportBatches<T>({
+    required Stream<List<SyncEntityKey>> keyBatches,
+    required Stream<List<String>> attachmentRevisionBatches,
     required Future<T> Function() write,
   });
 }
@@ -36,7 +49,7 @@ abstract interface class E2eeConfigVaultWriteExecutor
 bool usesE2eeConfigVault(SyncWriteExecutor executor) =>
     executor is E2eeConfigVaultWriteExecutor;
 
-final class LocalOnlySyncWriteExecutor implements SyncWriteExecutor {
+final class LocalOnlySyncWriteExecutor implements ImportSyncWriteExecutor {
   const LocalOnlySyncWriteExecutor();
 
   @override
@@ -54,9 +67,18 @@ final class LocalOnlySyncWriteExecutor implements SyncWriteExecutor {
   }) {
     return Future<T>.sync(write);
   }
+
+  @override
+  Future<T> runLocalImportBatches<T>({
+    required Stream<List<SyncEntityKey>> keyBatches,
+    required Stream<List<String>> attachmentRevisionBatches,
+    required Future<T> Function() write,
+  }) {
+    return Future<T>.sync(write);
+  }
 }
 
-final class UntrackedSyncWriteExecutor implements SyncWriteExecutor {
+final class UntrackedSyncWriteExecutor implements ImportSyncWriteExecutor {
   const UntrackedSyncWriteExecutor.forTests();
 
   @override
@@ -70,6 +92,15 @@ final class UntrackedSyncWriteExecutor implements SyncWriteExecutor {
   @override
   Future<T> runLocalBatch<T>({
     required Iterable<SyncEntityKey> keys,
+    required Future<T> Function() write,
+  }) {
+    return write();
+  }
+
+  @override
+  Future<T> runLocalImportBatches<T>({
+    required Stream<List<SyncEntityKey>> keyBatches,
+    required Stream<List<String>> attachmentRevisionBatches,
     required Future<T> Function() write,
   }) {
     return write();

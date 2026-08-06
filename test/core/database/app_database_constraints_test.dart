@@ -6005,6 +6005,52 @@ void main() {
       expect(intents.single.writerSessionId, null);
     });
 
+    test('大型导入的真实 dirty intent 跨页保持聊天实体依赖顺序', () async {
+      final outbox = E2eeSyncOutbox.takeOwnership(
+        commands: outboxCommands,
+        stateCodec: stateCodec,
+        accountUserId: _syncAccountUserId,
+        actorDeviceId: _syncActorDeviceId,
+        claimedWriterKeyVersion: 1,
+      );
+      addTearDown(outbox.close);
+      await outbox.initialize();
+      const entityTypes = <String>[
+        'conversation',
+        'turn',
+        'message',
+        'message-selection',
+        'tool-event',
+        'thought-signature',
+      ];
+      final keys = <SyncEntityKey>[
+        for (final entityType in entityTypes)
+          for (var index = 0; index < 25; index++)
+            SyncEntityKey(
+              entityType: entityType,
+              entityId: '$entityType-$index',
+            ),
+      ];
+
+      await outbox.runLocalImportBatches<void>(
+        keyBatches: Stream<List<SyncEntityKey>>.fromIterable(
+          <List<SyncEntityKey>>[keys.sublist(0, 100), keys.sublist(100)],
+        ),
+        write: () async {},
+      );
+
+      final firstPage = await outboxCommands.listDirtyIntents(limit: 100);
+      expect(
+        firstPage.map((intent) => intent.entityKey.entityType),
+        orderedEquals(<String>[
+          ...List<String>.filled(25, 'conversation'),
+          ...List<String>.filled(25, 'turn'),
+          ...List<String>.filled(25, 'message'),
+          ...List<String>.filled(25, 'message-selection'),
+        ]),
+      );
+    });
+
     test('seal commit 持久化认证密文且 unknown 重试逐字节不变', () async {
       final now = DateTime.utc(2026, 7, 28, 1);
       final sealed = await createCommittedOutbox(discriminator: 1, now: now);

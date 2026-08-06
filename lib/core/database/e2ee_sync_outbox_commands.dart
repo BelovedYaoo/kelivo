@@ -160,12 +160,7 @@ final class E2eeSyncOutboxCommands {
     required String writerSessionId,
     required DateTime now,
     required Future<T> Function() write,
-  }) async {
-    final writerSession = _requireBoundedText(
-      writerSessionId,
-      'writerSessionId',
-    );
-    final timestamp = _requireStorageTime(now, 'now');
+  }) {
     final seenKeys = <String>{};
     for (final intent in intents) {
       validateSyncEntityKey(intent.entityKey);
@@ -173,72 +168,84 @@ final class E2eeSyncOutboxCommands {
         throw const FormatException('同一批本地写入包含重复实体键');
       }
     }
-    if (intents.isEmpty) {
-      throw ArgumentError.value(intents, 'intents', '本地同步写入必须包含实体键');
-    }
+    return runLocalWriteBatchesAtomically<T>(
+      intentBatches: Stream<List<E2eeSyncLocalWriteIntent>>.value(intents),
+      writerSessionId: writerSessionId,
+      now: now,
+      write: write,
+    );
+  }
 
+  Future<T> runLocalWriteBatchesAtomically<T>({
+    required Stream<List<E2eeSyncLocalWriteIntent>> intentBatches,
+    required String writerSessionId,
+    required DateTime now,
+    required Future<T> Function() write,
+  }) async {
+    final writerSession = _requireBoundedText(
+      writerSessionId,
+      'writerSessionId',
+    );
+    final timestamp = _requireStorageTime(now, 'now');
     // 业务闭包必须继承同一 Drift 事务上下文，避免崩溃后留下无法解释的偏状态。
     return _database.transaction(() async {
-      final refs = <E2eeSyncIntentRef>[];
-      for (final input in intents) {
-        final existing = await _intentByKey(input.entityKey);
-        if (existing == null) {
-          await _database
-              .into(_database.e2eeSyncIntentRows)
-              .insert(
-                E2eeSyncIntentRowsCompanion.insert(
-                  entityType: input.entityKey.entityType,
-                  entityId: input.entityKey.entityId,
-                  intentId: input.intentId,
-                  generation: 1,
-                  phase: 'preparing',
-                  writerSessionId: Value(writerSession),
-                  createdAt: timestamp,
-                  updatedAt: timestamp,
-                ),
-              );
-          refs.add(
-            E2eeSyncIntentRef(
-              intentId: input.intentId,
-              entityKey: input.entityKey,
-              generation: 1,
-            ),
-          );
-          continue;
-        }
-        if (existing.generation >= _maxPositiveInt63) {
-          throw StateError('同步意图 generation 已耗尽');
-        }
-        final nextGeneration = existing.generation + 1;
-        final updated =
-            await (_database.update(_database.e2eeSyncIntentRows)..where(
-                  (row) =>
-                      row.entityType.equals(existing.entityType) &
-                      row.entityId.equals(existing.entityId) &
-                      row.intentId.equals(existing.intentId) &
-                      row.generation.equals(existing.generation),
-                ))
-                .write(
-                  E2eeSyncIntentRowsCompanion(
-                    generation: Value(nextGeneration),
-                    phase: const Value('preparing'),
+      var intentCount = 0;
+      await for (final batch in intentBatches) {
+        for (final input in batch) {
+          validateSyncEntityKey(input.entityKey);
+          final existing = await _intentByKey(input.entityKey);
+          if (existing != null &&
+              existing.phase == 'preparing' &&
+              existing.writerSessionId == writerSession) {
+            continue;
+          }
+          if (existing == null) {
+            await _database
+                .into(_database.e2eeSyncIntentRows)
+                .insert(
+                  E2eeSyncIntentRowsCompanion.insert(
+                    entityType: input.entityKey.entityType,
+                    entityId: input.entityKey.entityId,
+                    intentId: input.intentId,
+                    generation: 1,
+                    phase: 'preparing',
                     writerSessionId: Value(writerSession),
-                    sealLeaseToken: const Value(null),
-                    sealOwnerSessionId: const Value(null),
-                    sealLeaseExpiresAt: const Value(null),
-                    updatedAt: Value(timestamp),
+                    createdAt: timestamp,
+                    updatedAt: timestamp,
                   ),
                 );
-        if (updated != 1) throw StateError('同步意图 generation 竞争失败');
-        refs.add(
-          E2eeSyncIntentRef(
-            intentId: existing.intentId,
-            entityKey: input.entityKey,
-            generation: nextGeneration,
-          ),
-        );
+            intentCount++;
+            continue;
+          }
+          if (existing.generation >= _maxPositiveInt63) {
+            throw StateError('同步意图 generation 已耗尽');
+          }
+          final nextGeneration = existing.generation + 1;
+          final updated =
+              await (_database.update(_database.e2eeSyncIntentRows)..where(
+                    (row) =>
+                        row.entityType.equals(existing.entityType) &
+                        row.entityId.equals(existing.entityId) &
+                        row.intentId.equals(existing.intentId) &
+                        row.generation.equals(existing.generation),
+                  ))
+                  .write(
+                    E2eeSyncIntentRowsCompanion(
+                      generation: Value(nextGeneration),
+                      phase: const Value('preparing'),
+                      writerSessionId: Value(writerSession),
+                      sealLeaseToken: const Value(null),
+                      sealOwnerSessionId: const Value(null),
+                      sealLeaseExpiresAt: const Value(null),
+                      updatedAt: Value(timestamp),
+                    ),
+                  );
+          if (updated != 1) throw StateError('同步意图 generation 竞争失败');
+          intentCount++;
+        }
       }
       final result = await Future<T>.sync(write);
+      if (intentCount == 0) return result;
       final finished =
           await (_database.update(_database.e2eeSyncIntentRows)..where(
                 (row) =>
@@ -255,7 +262,7 @@ final class E2eeSyncOutboxCommands {
                   updatedAt: Value(timestamp),
                 ),
               );
-      if (finished != refs.length) {
+      if (finished != intentCount) {
         throw StateError('本地同步意图未完整收口为 dirty');
       }
       return result;
@@ -319,6 +326,19 @@ final class E2eeSyncOutboxCommands {
       ..where((row) => row.phase.equals('dirty'))
       ..orderBy([
         (row) => OrderingTerm.asc(row.updatedAt),
+        // 同一原子写入共享时间戳；父实体必须跨扫描页先于子实体进入 outbox。
+        (_) => OrderingTerm(
+          expression: const CustomExpression<int>(
+            "CASE entity_type "
+            "WHEN 'conversation' THEN 0 "
+            "WHEN 'turn' THEN 1 "
+            "WHEN 'message' THEN 2 "
+            "WHEN 'message-selection' THEN 3 "
+            "WHEN 'tool-event' THEN 3 "
+            "WHEN 'thought-signature' THEN 3 "
+            'ELSE 4 END',
+          ),
+        ),
         (row) => OrderingTerm.asc(row.entityType),
         (row) => OrderingTerm.asc(row.entityId),
       ])

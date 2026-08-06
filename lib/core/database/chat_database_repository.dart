@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -95,11 +96,13 @@ class BackupMergeReport {
     required this.importedConversations,
     required this.deduplicatedConversations,
     required this.remappedConversationIds,
+    required this.importedConversationIds,
   });
 
   final int importedConversations;
   final int deduplicatedConversations;
   final Map<String, String> remappedConversationIds;
+  final List<String> importedConversationIds;
 
   int get remappedConversations => remappedConversationIds.length;
 }
@@ -3246,6 +3249,40 @@ LIMIT 1;
     });
   }
 
+  Future<void> relocateLocalAssetForImport({
+    required String assetId,
+    required String expectedContentHash,
+    required int expectedByteSize,
+    required String expectedPath,
+    required String targetPath,
+  }) async {
+    await _db.transaction(() async {
+      final asset = await (_db.select(
+        _db.assetRows,
+      )..where((row) => row.id.equals(assetId))).getSingleOrNull();
+      if (asset == null ||
+          asset.contentHash != expectedContentHash ||
+          asset.byteSize != expectedByteSize) {
+        throw StateError('导入附件本地资产身份不一致');
+      }
+      if (asset.path == targetPath) return;
+      if (asset.path != expectedPath) {
+        throw StateError('导入附件本地资产路径已变化');
+      }
+      final updated =
+          await (_db.update(
+            _db.assetRows,
+          )..where((row) => row.id.equals(assetId))).write(
+            AssetRowsCompanion(
+              path: Value(targetPath),
+              // 快照中的缩略图绝对路径不属于当前 E2EE 文件根，必须重新生成。
+              thumbnailPath: const Value(null),
+            ),
+          );
+      if (updated != 1) throw StateError('导入附件本地资产重定位失败');
+    });
+  }
+
   Future<void> unlinkMessageAsset({
     required String revisionId,
     required String assetId,
@@ -5027,11 +5064,22 @@ LIMIT 1;
     });
   }
 
-  Future<void> replaceBackupSnapshot(File snapshotFile) async {
-    await _importBackupSnapshot(snapshotFile);
+  Future<void> replaceBackupSnapshot(
+    File snapshotFile, {
+    Future<void> Function()? onBeforeReplace,
+    Future<void> Function()? onReplacedBeforeCommit,
+  }) async {
+    await _importBackupSnapshot(
+      snapshotFile,
+      onBeforeReplace: onBeforeReplace,
+      onReplacedBeforeCommit: onReplacedBeforeCommit,
+    );
   }
 
-  Future<BackupMergeReport> mergeBackupSnapshot(File snapshotFile) async {
+  Future<BackupMergeReport> mergeBackupSnapshot(
+    File snapshotFile, {
+    Future<void> Function(List<String> conversationIds)? onImportedBeforeCommit,
+  }) async {
     if (!await snapshotFile.exists()) {
       throw FileSystemException(
         'Snapshot database does not exist',
@@ -5055,6 +5103,7 @@ LIMIT 1;
         var imported = 0;
         var deduplicated = 0;
         final remapped = <String, String>{};
+        final importedIds = <String>[];
 
         for (final sourceRow in sourceRows) {
           final sourceId = sourceRow.read<String>('id');
@@ -5122,6 +5171,7 @@ LIMIT 1;
             messageIdMap: messageIdMap,
           );
           imported += 1;
+          importedIds.add(targetId);
         }
 
         final foreignKeyFailures = await _db
@@ -5130,11 +5180,16 @@ LIMIT 1;
         if (foreignKeyFailures.isNotEmpty) {
           throw StateError('foreign_key_check');
         }
-        return BackupMergeReport(
+        final report = BackupMergeReport(
           importedConversations: imported,
           deduplicatedConversations: deduplicated,
           remappedConversationIds: Map.unmodifiable(remapped),
+          importedConversationIds: List<String>.unmodifiable(importedIds),
         );
+        if (importedIds.isNotEmpty) {
+          await onImportedBeforeCommit?.call(report.importedConversationIds);
+        }
+        return report;
       });
     } finally {
       if (attached) {
@@ -5191,6 +5246,18 @@ LIMIT 1;
             variables: [Variable<String>(messageId)],
           )
           .getSingleOrNull();
+      final attachments = await _db
+          .customSelect(
+            'SELECT ma.ordinal, ma.kind, ma.display_name, ma.media_type, '
+            'ma.attachment_id, ma.upload_id, ma.chunk_key_epoch, '
+            'ma.manifest_key_epoch, ma.manifest_revision, a.content_hash, '
+            'a.path, a.byte_size, a.width, a.height, a.thumbnail_path '
+            'FROM $schema.message_asset_rows AS ma '
+            'JOIN $schema.asset_rows AS a ON a.id = ma.asset_id '
+            'WHERE ma.revision_id = ? ORDER BY ma.ordinal;',
+            variables: [Variable<String>(messageId)],
+          )
+          .get();
       final data = Map<String, Object?>.from(row.data)..remove('id');
       data['is_streaming'] = 0;
       for (final field in const [
@@ -5214,6 +5281,7 @@ LIMIT 1;
         data,
         tool?.data['events_json'],
         signature?.data['signature'],
+        attachments.map((row) => row.data).toList(growable: false),
       ]);
     }
     return sha256
@@ -5427,10 +5495,69 @@ LIMIT 1;
         'WHERE message_id = ?;',
         [entry.value, entry.key],
       );
+      await _copyAttachedMessageAssets(
+        sourceSchema: 'merge_source',
+        sourceRevisionId: entry.key,
+        targetRevisionId: entry.value,
+      );
     }
   }
 
-  Future<void> _importBackupSnapshot(File snapshotFile) async {
+  Future<void> _copyAttachedMessageAssets({
+    required String sourceSchema,
+    required String sourceRevisionId,
+    required String targetRevisionId,
+  }) async {
+    final rows = await _db
+        .customSelect(
+          'SELECT ma.asset_id, ma.kind, ma.display_name, ma.media_type, '
+          'ma.attachment_id, ma.upload_id, ma.chunk_key_epoch, '
+          'ma.manifest_key_epoch, ma.manifest_revision, a.content_hash, '
+          'a.path, a.byte_size, a.width, a.height, a.thumbnail_path '
+          'FROM $sourceSchema.message_asset_rows AS ma '
+          'JOIN $sourceSchema.asset_rows AS a ON a.id = ma.asset_id '
+          'WHERE ma.revision_id = ? ORDER BY ma.ordinal;',
+          variables: [Variable<String>(sourceRevisionId)],
+        )
+        .get();
+    if (rows.isEmpty) return;
+    final target = await (_db.select(
+      _db.messageRows,
+    )..where((row) => row.id.equals(targetRevisionId))).getSingleOrNull();
+    if (target == null) throw StateError('snapshot_attachment_target_missing');
+    final replaced = await replaceMessageAssetReferences(
+      conversationId: target.conversationId,
+      revisionId: targetRevisionId,
+      expectedContent: target.content,
+      assets: <MessageAssetRegistration>[
+        for (final row in rows)
+          MessageAssetRegistration(
+            assetId: row.read<String>('asset_id'),
+            contentHash: row.read<String>('content_hash'),
+            path: row.read<String>('path'),
+            byteSize: row.read<int>('byte_size'),
+            kind: row.read<String>('kind'),
+            displayName: row.readNullable<String>('display_name'),
+            mediaType: row.readNullable<String>('media_type'),
+            attachmentId: row.readNullable<String>('attachment_id'),
+            uploadId: row.readNullable<String>('upload_id'),
+            chunkKeyEpoch: row.readNullable<int>('chunk_key_epoch'),
+            manifestKeyEpoch: row.readNullable<int>('manifest_key_epoch'),
+            manifestRevision: row.readNullable<int>('manifest_revision'),
+            width: row.readNullable<int>('width'),
+            height: row.readNullable<int>('height'),
+            thumbnailPath: row.readNullable<String>('thumbnail_path'),
+          ),
+      ],
+    );
+    if (!replaced) throw StateError('snapshot_attachment_target_changed');
+  }
+
+  Future<void> _importBackupSnapshot(
+    File snapshotFile, {
+    Future<void> Function()? onBeforeReplace,
+    Future<void> Function()? onReplacedBeforeCommit,
+  }) async {
     if (!await snapshotFile.exists()) {
       throw FileSystemException(
         'Snapshot database does not exist',
@@ -5446,6 +5573,7 @@ LIMIT 1;
       );
       attached = true;
       await _db.transaction(() async {
+        await onBeforeReplace?.call();
         await _clearChatRows();
         for (final table in const [
           'conversation_rows',
@@ -5458,6 +5586,19 @@ LIMIT 1;
           await _db.customStatement(
             'INSERT INTO main.$table '
             'SELECT * FROM restore_source.$table;',
+          );
+        }
+        final sourceMessageRows = await _db
+            .customSelect(
+              'SELECT id FROM restore_source.message_rows ORDER BY id;',
+            )
+            .get();
+        for (final sourceMessage in sourceMessageRows) {
+          final messageId = sourceMessage.read<String>('id');
+          await _copyAttachedMessageAssets(
+            sourceSchema: 'restore_source',
+            sourceRevisionId: messageId,
+            targetRevisionId: messageId,
           );
         }
         await _writeMigrationCompleteReceipt();
@@ -5481,13 +5622,14 @@ LIMIT 1;
                 sourceMessageCount) {
           throw StateError('snapshot_import_count');
         }
+        await onReplacedBeforeCommit?.call();
+        await validateIntegrity();
       });
     } finally {
       if (attached) {
         await _db.customStatement('DETACH DATABASE restore_source;');
       }
     }
-    await validateIntegrity();
   }
 
   Future<int> _attachedTableCount(String schema, String table) async {
