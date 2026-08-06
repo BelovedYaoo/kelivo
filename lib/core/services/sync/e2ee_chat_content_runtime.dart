@@ -60,6 +60,10 @@ typedef E2eeChatContentTransportFactory =
 
 typedef E2eeAttachmentUploadWorkScanner =
     Future<bool> Function(E2eeAttachmentUploadCommands commands);
+typedef E2eeChatSecurityMaintenance =
+    Future<E2eeSyncSecurityMaintenanceDisposition> Function(
+      E2eeSyncExecutionBudget? executionBudget,
+    );
 
 enum E2eeChatContentRuntimeState {
   created,
@@ -101,6 +105,8 @@ final class E2eeChatContentRuntime
     required CloudSyncClient client,
     E2eeChatContentTransportFactory transportFactory = _defaultTransportFactory,
     DateTime Function() utcNow = _defaultUtcNow,
+    E2eeChatSecurityMaintenance? securityMaintenance,
+    E2eeSyncSecurityStateChangedHandler? onSecurityStateChanged,
     @visibleForTesting
     E2eeAttachmentUploadWorkScanner attachmentWorkScanner =
         _defaultAttachmentUploadWorkScanner,
@@ -114,6 +120,8 @@ final class E2eeChatContentRuntime
     transportFactory: transportFactory,
     utcNow: utcNow,
     attachmentWorkScanner: attachmentWorkScanner,
+    securityMaintenance: securityMaintenance,
+    onSecurityStateChanged: onSecurityStateChanged,
     mode: E2eeChatContentRuntimeMode.continuous,
   );
 
@@ -126,6 +134,7 @@ final class E2eeChatContentRuntime
     required CloudSyncClient client,
     E2eeChatContentTransportFactory transportFactory = _defaultTransportFactory,
     DateTime Function() utcNow = _defaultUtcNow,
+    E2eeChatSecurityMaintenance? securityMaintenance,
     @visibleForTesting
     E2eeAttachmentUploadWorkScanner attachmentWorkScanner =
         _defaultAttachmentUploadWorkScanner,
@@ -140,6 +149,8 @@ final class E2eeChatContentRuntime
       transportFactory: transportFactory,
       utcNow: utcNow,
       attachmentWorkScanner: attachmentWorkScanner,
+      securityMaintenance: securityMaintenance,
+      onSecurityStateChanged: null,
       mode: E2eeChatContentRuntimeMode.singleCycle,
     );
     runtime.bindChatService(
@@ -159,6 +170,8 @@ final class E2eeChatContentRuntime
     required this._transportFactory,
     required this._utcNow,
     required this._attachmentWorkScanner,
+    required this._securityMaintenance,
+    required this._onSecurityStateChanged,
     required this._mode,
   }) : _session = session,
        _databaseFile = databaseFile.absolute,
@@ -177,6 +190,8 @@ final class E2eeChatContentRuntime
   final E2eeChatContentTransportFactory _transportFactory;
   final DateTime Function() _utcNow;
   final E2eeAttachmentUploadWorkScanner _attachmentWorkScanner;
+  final E2eeChatSecurityMaintenance? _securityMaintenance;
+  final E2eeSyncSecurityStateChangedHandler? _onSecurityStateChanged;
   final E2eeChatContentRuntimeMode _mode;
 
   E2eeChatContentRuntimeState _state = E2eeChatContentRuntimeState.created;
@@ -474,6 +489,15 @@ final class E2eeChatContentRuntime
         }
 
         return E2eeSyncCycleRunner(
+          securityMaintenance: () {
+            final maintenance = _securityMaintenance;
+            if (maintenance == null) {
+              return Future<E2eeSyncSecurityMaintenanceDisposition>.value(
+                E2eeSyncSecurityMaintenanceDisposition.continueSync,
+              );
+            }
+            return maintenance(executionBudget);
+          },
           runPullBatch: <T>(pull) {
             return runBudgeted<T>(() {
               Future<T> run() => adapter.runPullAndPublish(pull);
@@ -542,6 +566,8 @@ final class E2eeChatContentRuntime
           cycleRunner: createCycleRunner(null),
           isTerminalFailure: isTerminalCloudSyncAuthenticationFailure,
           onTerminalFailure: _handleTerminalAuthenticationFailure,
+          onSecurityStateChanged:
+              _onSecurityStateChanged ?? _ignoreRuntimeSecurityStateChange,
         );
         _scheduler = scheduler;
       }
@@ -1730,6 +1756,7 @@ Future<({String contentHash, int bytes})> _measureConfigAssetFile(String path) {
 
 String _sha256Hex(Uint8List value) =>
     value.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
+Future<void> _ignoreRuntimeSecurityStateChange() async {}
 
 Uint8List _decodeSha256Hex(String value) {
   if (!RegExp(r'^[0-9a-f]{64}$').hasMatch(value)) {

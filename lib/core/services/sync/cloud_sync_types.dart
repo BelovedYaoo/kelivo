@@ -231,6 +231,15 @@ final class CloudSyncSelfRevocationContinuationToken {
   String toString() => 'CloudSyncSelfRevocationContinuationToken(<已隐藏>)';
 }
 
+DateTime _requireSelfRevocationTimestamp(DateTime value, String field) {
+  if (!value.isUtc ||
+      value.microsecond != 0 ||
+      value.millisecondsSinceEpoch < 0) {
+    throw FormatException('$field 必须为毫秒精度 UTC 时间');
+  }
+  return value;
+}
+
 final class CloudSyncMembershipManifestDigest {
   CloudSyncMembershipManifestDigest._(this.bytes, this.encoded);
 
@@ -343,6 +352,33 @@ final class CloudSyncSelfRevocationRequest {
 }
 
 final class CloudSyncSelfRevocationRequestResult {
+  factory CloudSyncSelfRevocationRequestResult.restore({
+    required CloudSyncSelfRevocationRequest request,
+    required DateTime requestedAt,
+    required DateTime receiptExpiresAt,
+  }) {
+    final normalizedRequestedAt = _requireSelfRevocationTimestamp(
+      requestedAt,
+      'requestedAt',
+    );
+    final normalizedReceiptExpiresAt = _requireSelfRevocationTimestamp(
+      receiptExpiresAt,
+      'receiptExpiresAt',
+    );
+    if (!normalizedRequestedAt.isBefore(request.expiresAt) ||
+        request.expiresAt.difference(normalizedRequestedAt) >
+            const Duration(hours: 24, minutes: 5) ||
+        normalizedReceiptExpiresAt.difference(normalizedRequestedAt) !=
+            const Duration(days: 30)) {
+      throw const FormatException('自撤销请求结果时间未绑定原始意图');
+    }
+    return CloudSyncSelfRevocationRequestResult._(
+      request: request,
+      requestedAt: normalizedRequestedAt,
+      receiptExpiresAt: normalizedReceiptExpiresAt,
+    );
+  }
+
   factory CloudSyncSelfRevocationRequestResult.fromJson(
     CloudSyncJsonMap json, {
     required CloudSyncSelfRevocationRequest request,
@@ -410,7 +446,7 @@ final class CloudSyncSelfRevocationRequestResult {
         receiptExpiresAt.difference(requestedAt) != const Duration(days: 30)) {
       throw const FormatException('自撤销请求结果未绑定原始意图');
     }
-    return CloudSyncSelfRevocationRequestResult._(
+    return CloudSyncSelfRevocationRequestResult.restore(
       request: request,
       requestedAt: requestedAt,
       receiptExpiresAt: receiptExpiresAt,
@@ -507,6 +543,18 @@ sealed class CloudSyncSelfRevocationStatus {
       }(),
       _ => throw const FormatException('自撤销状态分支无效'),
     };
+  }
+
+  factory CloudSyncSelfRevocationStatus.fromJsonForRequest(
+    CloudSyncJsonMap json, {
+    required CloudSyncSelfRevocationRequest request,
+  }) {
+    final restored = CloudSyncSelfRevocationRequestResult.restore(
+      request: request,
+      requestedAt: _requireCanonicalUtcDateTime(json, 'requestedAt'),
+      receiptExpiresAt: _requireCanonicalUtcDateTime(json, 'receiptExpiresAt'),
+    );
+    return CloudSyncSelfRevocationStatus.fromJson(json, request: restored);
   }
 
   static const _pendingJsonKeys = <String>{

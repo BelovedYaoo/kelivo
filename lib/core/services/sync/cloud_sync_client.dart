@@ -170,6 +170,10 @@ abstract interface class CloudSyncSelfRevocationTransport {
     CloudSyncSelfRevocationRequestResult request,
   );
 
+  Future<CloudSyncSelfRevocationStatus> continueSelfRevocationStatus(
+    CloudSyncSelfRevocationRequest request,
+  );
+
   Future<CloudSyncSelfRevocationCancelled> cancelSelfRevocationRequest(
     CloudSyncSelfRevocationRequestResult request,
   );
@@ -381,6 +385,22 @@ final class CloudSyncClient
         extra: _strictResponseExtra,
       );
       return CloudSyncSelfRevocationStatus.fromJson(
+        _strictVariantResponseData(response.extra[_rawResponseKey], '自撤销状态响应'),
+        request: request,
+      );
+    });
+  }
+
+  @override
+  Future<CloudSyncSelfRevocationStatus> continueSelfRevocationStatus(
+    CloudSyncSelfRevocationRequest request,
+  ) {
+    return _guard(() async {
+      final response = await _client.getDeviceApi().getSelfRevocationStatus(
+        headers: _authorizationHeaders(request.continuationToken.value),
+        extra: _strictResponseExtra,
+      );
+      return CloudSyncSelfRevocationStatus.fromJsonForRequest(
         _strictVariantResponseData(response.extra[_rawResponseKey], '自撤销状态响应'),
         request: request,
       );

@@ -41,13 +41,19 @@ import 'core/services/sync/e2ee_account_recovery_production_runner.dart';
 import 'core/services/sync/e2ee_account_recovery_runner.dart';
 import 'core/services/sync/e2ee_chat_content_runtime.dart';
 import 'core/services/sync/e2ee_config_provider_binding.dart';
+import 'core/services/sync/e2ee_current_device_self_revocation.dart';
 import 'core/services/sync/e2ee_device_pairing_membership_commit.dart';
+import 'core/services/sync/e2ee_device_revocation_runtime.dart';
 import 'core/services/sync/e2ee_mobile_background_sync.dart';
+import 'core/services/sync/e2ee_self_revocation_checkpoint.dart';
+import 'core/services/sync/e2ee_sync_scheduler.dart';
+import 'core/services/sync/e2ee_trusted_self_revocation_processor.dart';
 import 'core/services/sync/sync_write_executor.dart';
 import 'core/services/storage/durable_shared_preferences_eraser.dart';
 import 'core/services/static_unhandled_error_boundary.dart';
 import 'core/services/workspace/account_workspace_runtime.dart';
 import 'core/services/workspace/device_state_blob_store.dart';
+import 'core/services/workspace/e2ee_data_rekey_stage_store.dart';
 import 'core/services/workspace/installation_operation_lease.dart';
 import 'core/services/workspace/local_cryptographic_wipe.dart';
 import 'core/services/workspace/local_cryptographic_wipe_startup.dart';
@@ -365,7 +371,7 @@ Future<void> main() async {
       }
       // Enable edge-to-edge to allow content under system bars (Android)
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-      final chatContentRuntime = _createE2eeChatContentRuntime(
+      final e2eeRuntimeComposition = _createE2eeRuntimeComposition(
         workspaceRuntime: workspaceRuntime,
         databaseGateway: databaseGateway,
       );
@@ -377,7 +383,7 @@ Future<void> main() async {
           localCryptographicWipe: localCryptographicWipe,
           installationOperationLease: installationOperationLease,
           installationBusinessLease: installationBusinessLease,
-          chatContentRuntime: chatContentRuntime,
+          e2eeRuntimeComposition: e2eeRuntimeComposition,
           restoreOutcome: restoreOutcome?.state,
         ),
       );
@@ -393,7 +399,7 @@ Future<void> main() async {
 Future<void> _clearAllPreferencesForLocalWipe() =>
     const DurableSharedPreferencesEraser().eraseAll();
 
-E2eeChatContentRuntime? _createE2eeChatContentRuntime({
+_E2eeRuntimeComposition? _createE2eeRuntimeComposition({
   required AccountWorkspaceRuntime workspaceRuntime,
   required ChatDatabaseGateway databaseGateway,
 }) {
@@ -403,16 +409,113 @@ E2eeChatContentRuntime? _createE2eeChatContentRuntime({
       session.isExpiredAt(DateTime.now().toUtc())) {
     return null;
   }
-  return E2eeChatContentRuntime.takeOwnership(
-    session: session,
-    deviceStateStore: DeviceStateBlobStore(
-      installationRoot: workspaceRuntime.installationRoot,
-    ),
-    secureCore: const KelivoSecureCore(),
-    databaseGateway: databaseGateway,
-    databaseFile: _currentAccountDatabaseFile(workspaceRuntime),
-    client: CloudSyncClient(token: session.token),
+  final deviceStateStore = DeviceStateBlobStore(
+    installationRoot: workspaceRuntime.installationRoot,
   );
+  const secureCore = KelivoSecureCore();
+  final databaseFile = _currentAccountDatabaseFile(workspaceRuntime);
+  final client = CloudSyncClient(token: session.token);
+  final stageStore = E2eeDataRekeyStageStore(
+    installationRoot: workspaceRuntime.installationRoot,
+  );
+  final revocationRuntime = E2eeDeviceRevocationProductionRuntime.create(
+    baseUrl: session.baseUrl,
+    normalizedLoginName: session.loginName,
+    deviceStateStore: deviceStateStore,
+    secureCore: secureCore,
+    databaseGateway: databaseGateway,
+    databaseFile: databaseFile,
+    rotationTransport: client,
+    dataRekeyTransport: client,
+    stageStore: stageStore,
+  );
+  final pendingProcessor = E2eeTrustedSelfRevocationProcessor(
+    baseUrl: session.baseUrl,
+    normalizedLoginName: session.loginName,
+    deviceStateStore: deviceStateStore,
+    secureCore: secureCore,
+    databaseGateway: databaseGateway,
+    databaseFile: databaseFile,
+    selfRevocationTransport: client,
+    revocationRuntime: revocationRuntime,
+  );
+  final contentRuntime = E2eeChatContentRuntime.takeOwnership(
+    session: session,
+    deviceStateStore: deviceStateStore,
+    secureCore: secureCore,
+    databaseGateway: databaseGateway,
+    databaseFile: databaseFile,
+    client: client,
+    securityMaintenance: (executionBudget) async {
+      final disposition = await pendingProcessor.runOnce(
+        session: session,
+        executionBudget: executionBudget,
+      );
+      return disposition ==
+              E2eeTrustedSelfRevocationProcessDisposition.securityStateChanged
+          ? E2eeSyncSecurityMaintenanceDisposition.securityStateChanged
+          : E2eeSyncSecurityMaintenanceDisposition.continueSync;
+    },
+    onSecurityStateChanged: PlatformUtils.restartApp,
+  );
+  return _E2eeRuntimeComposition(
+    contentRuntime: contentRuntime,
+    currentDeviceSelfRevocation: E2eeCurrentDeviceSelfRevocationRuntime(
+      baseUrl: session.baseUrl,
+      normalizedLoginName: session.loginName,
+      deviceStateStore: deviceStateStore,
+      secureCore: secureCore,
+      databaseGateway: databaseGateway,
+      databaseFile: databaseFile,
+      checkpointStore: E2eeSelfRevocationCheckpointStore(
+        installationRoot: workspaceRuntime.installationRoot,
+      ),
+    ),
+    deviceStateStore: deviceStateStore,
+    secureCore: secureCore,
+    databaseGateway: databaseGateway,
+    databaseFile: databaseFile,
+    installationRoot: workspaceRuntime.installationRoot,
+  );
+}
+
+final class _E2eeRuntimeComposition {
+  const _E2eeRuntimeComposition({
+    required this.contentRuntime,
+    required this.currentDeviceSelfRevocation,
+    required this.deviceStateStore,
+    required this.secureCore,
+    required this.databaseGateway,
+    required this.databaseFile,
+    required this.installationRoot,
+  });
+
+  final E2eeChatContentRuntime contentRuntime;
+  final E2eeCurrentDeviceSelfRevocationRuntime currentDeviceSelfRevocation;
+  final DeviceStateBlobStore deviceStateStore;
+  final KelivoSecureCore secureCore;
+  final ChatDatabaseGateway databaseGateway;
+  final File databaseFile;
+  final Directory installationRoot;
+
+  E2eeDeviceRevocationProductionRuntime revocationRuntimeFor(
+    CloudSyncAccountClient client,
+  ) {
+    if (client is! CloudSyncDataRekeyTransport) {
+      throw StateError('云同步客户端缺少账户数据换钥能力');
+    }
+    return E2eeDeviceRevocationProductionRuntime.create(
+      baseUrl: defaultCloudSyncBaseUrl,
+      normalizedLoginName: currentDeviceSelfRevocation.normalizedLoginName,
+      deviceStateStore: deviceStateStore,
+      secureCore: secureCore,
+      databaseGateway: databaseGateway,
+      databaseFile: databaseFile,
+      rotationTransport: client,
+      dataRekeyTransport: client,
+      stageStore: E2eeDataRekeyStageStore(installationRoot: installationRoot),
+    );
+  }
 }
 
 File _currentAccountDatabaseFile(AccountWorkspaceRuntime workspaceRuntime) =>
@@ -615,7 +718,7 @@ class MyApp extends StatelessWidget {
     required this.installationOperationLease,
     required this.installationBusinessLease,
     super.key,
-    this.chatContentRuntime,
+    this.e2eeRuntimeComposition,
     this.restoreOutcome,
   });
 
@@ -625,11 +728,12 @@ class MyApp extends StatelessWidget {
   final LocalCryptographicWipe localCryptographicWipe;
   final InstallationOperationLease installationOperationLease;
   final InstallationBusinessLease installationBusinessLease;
-  final E2eeChatContentRuntime? chatContentRuntime;
+  final _E2eeRuntimeComposition? e2eeRuntimeComposition;
   final RestoreReceiptState? restoreOutcome;
 
   @override
   Widget build(BuildContext context) {
+    final chatContentRuntime = e2eeRuntimeComposition?.contentRuntime;
     const localSyncWriteExecutor = LocalOnlySyncWriteExecutor();
     final chatSyncWriteExecutor = chatContentRuntime ?? localSyncWriteExecutor;
     final SyncWriteExecutor configSyncWriteExecutor =
@@ -754,6 +858,7 @@ class MyApp extends StatelessWidget {
           create: (ctx) {
             ctx.read<E2eeConfigProviderBinding>();
             final runtime = chatContentRuntime;
+            final security = e2eeRuntimeComposition;
             final provider = runtime == null
                 ? CloudSyncProvider.controlPlaneOnly(
                     workspaceRuntime,
@@ -779,6 +884,34 @@ class MyApp extends StatelessWidget {
                     installationOperationLease: installationOperationLease,
                     installationBusinessLease: installationBusinessLease,
                     accountRecoveryRunnerFactory: accountRecoveryRunnerFactory,
+                    currentDeviceRevocationPreparer:
+                        security!.currentDeviceSelfRevocation.prepare,
+                    currentDeviceRevocationCommitter: ({
+                      required CloudSyncAccountClient client,
+                      required E2eeSelfRevocationCheckpoint checkpoint,
+                    }) {
+                      if (client is! CloudSyncSelfRevocationTransport) {
+                        throw StateError('云同步客户端缺少自撤销 continuation 能力');
+                      }
+                      return security.currentDeviceSelfRevocation.submitAndPoll(
+                        transport: client,
+                        checkpoint: checkpoint,
+                      );
+                    },
+                    trustedDeviceRevocationCommitter: ({
+                      required CloudSyncAccountClient client,
+                      required CloudSyncAccountSession session,
+                      required String operationId,
+                      required String revokedDeviceId,
+                    }) {
+                      return security
+                          .revocationRuntimeFor(client)
+                          .revokeDirect(
+                            session: session,
+                            operationId: operationId,
+                            revokedDeviceId: revokedDeviceId,
+                          );
+                    },
                     stopBackgroundSync: () =>
                         mobileBackgroundSyncScheduler.setEnabled(false),
                     restartForLocalDeviceWipe: PlatformUtils.restartApp,

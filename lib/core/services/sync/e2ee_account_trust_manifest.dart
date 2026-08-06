@@ -891,6 +891,25 @@ final class E2eeAccountTrustManifestModule {
     );
   }
 
+  /// 仅用于恢复本机加密 checkpoint；返回值仍必须由当前 ARK 重新认证。
+  Future<E2eeVerifiedMembership> verifyPersistedAnchorSnapshot({
+    required KelivoAccountRootKeyHandle ark,
+    required String userId,
+    required int securityGeneration,
+    required int keyEpoch,
+    required Uint8List persistedManifest,
+    required Uint8List persistedManifestDigest,
+  }) {
+    return _verifyPersistedAnchor(
+      ark: ark,
+      userId: userId,
+      securityGeneration: securityGeneration,
+      keyEpoch: keyEpoch,
+      persistedManifest: persistedManifest,
+      persistedManifestDigest: persistedManifestDigest,
+    );
+  }
+
   Future<E2eeVerifiedMembership> verifyHistoryBatch({
     required E2eeVerifiedMembership previous,
     required List<E2eeMembershipHistoryEntry> entries,
