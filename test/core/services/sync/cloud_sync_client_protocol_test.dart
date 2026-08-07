@@ -14,6 +14,7 @@ import 'package:path/path.dart' as p;
 import 'package:Kelivo/core/database/app_database.dart';
 import 'package:Kelivo/core/database/chat_database_repository.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_authenticator.dart';
+import 'package:Kelivo/core/services/sync/sensitive_utf8.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_recovery.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_recovery_runner.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_attachment_types.dart';
@@ -1220,11 +1221,17 @@ void main() {
     );
     expect(
       completedFirstOutcome,
-      isA<KelivoSecureCoreException>().having(
-        (error) => error.status,
-        'status',
-        KelivoSecureCoreStatus.opaqueMessageInvalid,
-      ),
+      isA<CloudSyncException>()
+          .having(
+            (error) => error.kind,
+            'kind',
+            CloudSyncFailureKind.unauthenticated,
+          )
+          .having(
+            (error) => error.serverCode,
+            'serverCode',
+            e2eeOpaqueAuthenticationFailedCode,
+          ),
     );
     expect(requestCount, 1);
     expect(firstPassword, everyElement(0));
@@ -1338,7 +1345,20 @@ void main() {
             'SYNC_AUTHENTICATION_IN_PROGRESS',
           ),
     );
-    expect(completedFirstOutcome, isA<KelivoSecureCoreException>());
+    expect(
+      completedFirstOutcome,
+      isA<CloudSyncException>()
+          .having(
+            (error) => error.kind,
+            'kind',
+            CloudSyncFailureKind.unauthenticated,
+          )
+          .having(
+            (error) => error.serverCode,
+            'serverCode',
+            e2eeOpaqueAuthenticationFailedCode,
+          ),
+    );
     expect(firstPassword, everyElement(0));
     expect(secondPassword, everyElement(0));
 
@@ -1352,7 +1372,20 @@ void main() {
         clientVersion: '1.2.3',
       ),
     );
-    expect(retryOutcome, isA<KelivoSecureCoreException>());
+    expect(
+      retryOutcome,
+      isA<CloudSyncException>()
+          .having(
+            (error) => error.kind,
+            'kind',
+            CloudSyncFailureKind.unauthenticated,
+          )
+          .having(
+            (error) => error.serverCode,
+            'serverCode',
+            e2eeOpaqueAuthenticationFailedCode,
+          ),
+    );
     expect(retryPassword, everyElement(0));
     expect(requestCount, 2);
     expect(
@@ -1558,11 +1591,17 @@ void main() {
     await expectLater(
       loginFuture,
       throwsA(
-        isA<KelivoSecureCoreException>().having(
-          (error) => error.status,
-          'status',
-          KelivoSecureCoreStatus.opaqueMessageInvalid,
-        ),
+        isA<CloudSyncException>()
+            .having(
+              (error) => error.kind,
+              'kind',
+              CloudSyncFailureKind.unauthenticated,
+            )
+            .having(
+              (error) => error.serverCode,
+              'serverCode',
+              e2eeOpaqueAuthenticationFailedCode,
+            ),
       ),
     );
 
@@ -1645,11 +1684,17 @@ void main() {
     await expectLater(
       registrationFuture,
       throwsA(
-        isA<KelivoSecureCoreException>().having(
-          (error) => error.status,
-          'status',
-          KelivoSecureCoreStatus.opaqueMessageInvalid,
-        ),
+        isA<CloudSyncException>()
+            .having(
+              (error) => error.kind,
+              'kind',
+              CloudSyncFailureKind.unauthenticated,
+            )
+            .having(
+              (error) => error.serverCode,
+              'serverCode',
+              e2eeOpaqueAuthenticationFailedCode,
+            ),
       ),
     );
 

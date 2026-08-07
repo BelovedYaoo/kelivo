@@ -367,12 +367,26 @@ final class E2eeAccountAuthenticator
         registrationRequest: opaqueStart.request,
       );
       opaqueStateActive = false;
-      registrationUpload = await _secureCore.finishOpaqueRegistration(
-        opaqueStart.state,
-        password: passwordCopy,
-        response: start.registrationResponse,
-        accountId: _uuidBytes(start.accountBinding),
-      );
+      try {
+        registrationUpload = await _secureCore.finishOpaqueRegistration(
+          opaqueStart.state,
+          password: passwordCopy,
+          response: start.registrationResponse,
+          accountId: _uuidBytes(start.accountBinding),
+        );
+      } on KelivoSecureCoreException catch (error) {
+        // 与登录路径一致：服务端伪凭据响应/畸形注册响应在本地 OPAQUE
+        // 阶段表现为协议失败，统一映射为未认证，不向注册界面泄漏原因。
+        if (error.status == KelivoSecureCoreStatus.opaqueProtocolFailed ||
+            error.status == KelivoSecureCoreStatus.opaqueMessageInvalid) {
+          throw const CloudSyncException(
+            kind: CloudSyncFailureKind.unauthenticated,
+            retryable: false,
+            serverCode: e2eeOpaqueAuthenticationFailedCode,
+          );
+        }
+        rethrow;
+      }
       final userId = _uuidBytes(start.userId);
       ark = await _secureCore.generateAccountRootKey(
         userId: userId,
