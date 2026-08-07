@@ -141,3 +141,10 @@
 - 验收验证边界（需真机/运行时）：Android manifest 备份禁用真机构建、MCP 加密真实应用读写、global-proxy 第二设备同步水合、OPAQUE 登录 UI 交互
 - 已完成（2026-08-07）：账户恢复端到端修复。恢复失败链路（"密码介质正确但云同步失败"）根因：native 绑定校验把 prepared 提交摘要误与挑战摘要比较、finalize 后误调 confirmReady（恢复 token 已被服务端吊销）、finalize 清空 token 导致客户端激活阶段无法读冻结历史、不可变字节视图清零崩溃。修复：移除错误比较与 finalize 后 confirmReady（完成回执自带已验证证明）；服务端 finalize 保留 token 至 TTL 且释放恢复锁，recovery token 认证与锁解耦（锁存在但过期视为失效）；clearSensitiveBytes 容忍不可变视图；恢复失败仅输出静态事件码。服务端已部署生产（bfc8aca），客户端已推送（fa8fefb2）；AVD 集成测试全流程通过（注册→介质→清除→恢复→重启→会话可用）。
 - 已完成（2026-08-07 备份导入修复）：用户报告旧版明文备份（1.1.17+2061，52 会话/265 消息）导入后"像没导入一样"。根因链：明文备份导入把会话写入 SQLCipher db、把 assistants_v1/current_assistant_id_v1 等写入 prefs → 下次启动 PlaintextRemoteBackupRetirement 把 retiredPreferenceKeys（含助手/MCP/供应商等 10 个键）当作明文镜像无条件删除（本地工作区无 Vault，这些键是唯一真相）→ AssistantProvider 加载为空并重建默认助手（c4f7b8e1）→ 导入会话（assistantId=1f381ff1）被 drawer 过滤隐藏。修复：retire() 增加 localNamespaceIsTruth 参数，本地工作区跳过 flutter.* 前缀退役删除，账号工作区（Vault 为真相）行为不变；新增本地模式回归测试。验证：隔离 AVD 全链路通过（导入→重启→drawer 显示 Github 助手与 52 会话）；退役测试 9 项、assistant provider 41 项通过；客户端 main@372ea32f 已推送。附带恢复 android/app/build.gradle.kts 的 arm64-only packaging 排除（模拟器验证期间曾临时放开）。
+- 已完成（2026-08-07 工程遗留与发布门禁）：
+  - 关闭已完成 issue：#63（actionlint 全部通过）、#93（ios/build 产物退出跟踪并补 gitignore）、#97（protocol cargo fmt --check 通过）、#100/#102/#103/#105/#106/#107/#108/#109（代码已合入并验证）。
+  - 修复 #108 遗漏：OPAQUE 注册路径（finishOpaqueRegistration）未统一映射未认证，补映射并同步 4 处测试期望；secure-core 隔离入口 194/194 通过。
+  - 修复品牌硬切遗留：9 个 UI 测试（重启门禁/恢复失败/备份重启对话框/QQ 群选择）仍断言 Kelivo 文本，同步为 Olivia，19/19 通过。
+  - 新增 issue：#115（DataSync 合并模式生成同步意图批次致 merge 测试失败，与 #112 相关）、#116（dio 网络失败测试端口复用竞态 flaky）。
+  - 全量测试收敛：-23 → -9（剩余：secure-core 域 7 个常规跑失败但隔离入口全过 + #115/#116 两个预存）；secure-core 隔离（cloud_sync_client_protocol 194 + mcp/app_database 141 + recovery_checkpoint 5）全部通过。
+  - 发布门禁：Android release 构建受阻于本机缺签名密钥（CI 注入，key.properties 被忽略不提交），签名验证属 CI 职责；本机已验证 debug arm64-only 构建与 secure-core 隔离测试。
