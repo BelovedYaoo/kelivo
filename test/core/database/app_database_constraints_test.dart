@@ -2510,13 +2510,10 @@ void main() {
         hasLength(1),
       );
 
-      final confirmation = await executor.confirmReady(
-        context: context,
-        execution: execution,
-      );
+      await executor.confirmReady(context: context, execution: execution);
       await executor.acknowledgeLocalCommit(
         context: context,
-        confirmation: confirmation,
+        execution: execution,
       );
 
       expect(await dataRekeyCommands.readActive(), equals(null));
@@ -3352,7 +3349,7 @@ void main() {
       await expectLater(
         committer.commit(
           binding: binding,
-          confirmation: capturingLocal.confirmation!,
+          execution: capturingLocal.execution!,
         ),
         throwsFormatException,
       );
@@ -11804,10 +11801,10 @@ final class _FakeAccountKeyTransitionLocalCommitter
   @override
   Future<void> commit({
     required E2eeAccountKeyTransitionBinding binding,
-    required E2eeDataRekeyReadyConfirmation confirmation,
+    required E2eeDataRekeyFinalizedExecution execution,
   }) async {
     commitCalls += 1;
-    expect(confirmation.execution.operationId, binding.rekeyOperationId);
+    expect(execution.operationId, binding.rekeyOperationId);
     _committed = true;
   }
 
@@ -11822,14 +11819,14 @@ final class _FakeAccountKeyTransitionLocalCommitter
 
 final class _CapturingAccountKeyTransitionLocalCommitter
     implements E2eeAccountKeyTransitionLocalCommitter {
-  E2eeDataRekeyReadyConfirmation? confirmation;
+  E2eeDataRekeyFinalizedExecution? execution;
 
   @override
   Future<void> commit({
     required E2eeAccountKeyTransitionBinding binding,
-    required E2eeDataRekeyReadyConfirmation confirmation,
+    required E2eeDataRekeyFinalizedExecution execution,
   }) async {
-    this.confirmation = confirmation;
+    this.execution = execution;
   }
 
   @override

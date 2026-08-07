@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:developer' as developer;
-import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:kelivo_secure_core/kelivo_secure_core.dart';
@@ -526,7 +525,6 @@ final class CloudSyncProvider extends ChangeNotifier
     CloudSyncAccountClient? recoveryClient;
     CloudSyncAccountSession? boundSession;
     Object? failure;
-    StackTrace? failureStackTrace;
     var completed = false;
     var mutationStarted = false;
     var workspaceAcknowledged = false;
@@ -590,11 +588,8 @@ final class CloudSyncProvider extends ChangeNotifier
       if (boundSession == null) return false;
       await runner.acknowledgeWorkspaceBound();
       workspaceAcknowledged = true;
-    } catch (error, stackTrace) {
+    } catch (error) {
       failure = error;
-      failureStackTrace = stackTrace;
-      debugPrint('CLOUD_SYNC_ACCOUNT_RECOVERY_FAILED_ERROR: $error');
-      debugPrint('CLOUD_SYNC_ACCOUNT_RECOVERY_FAILED_STACK: $stackTrace');
     } finally {
       command.dispose();
       try {
@@ -626,9 +621,6 @@ final class CloudSyncProvider extends ChangeNotifier
       _accountRecoveryProgress = E2eeAccountRecoveryProgress.failed;
       final normalizedError = _normalizeFailure(failure);
       _lastError = normalizedError;
-      debugPrint('CLOUD_SYNC_ACCOUNT_RECOVERY_NORMALIZED: '
-          '${normalizedError.kind} code=${normalizedError.serverCode} '
-          'status=${normalizedError.statusCode}');
       if (workspaceAcknowledged || _pendingAccountRecoveryRunner != null) {
         _workspaceRestartRequired = true;
         _status = CloudSyncProviderStatus.workspaceChangePending;
@@ -1044,10 +1036,7 @@ final class CloudSyncProvider extends ChangeNotifier
       return false;
     }
     if (revokesCurrentSession) {
-      return _prepareCurrentDeviceRevocation(
-        client: client,
-        session: session,
-      );
+      return _prepareCurrentDeviceRevocation(client: client, session: session);
     }
     final committer = _trustedDeviceRevocationCommitter;
     final stopBackgroundSync = _stopBackgroundSync;
@@ -1122,10 +1111,7 @@ final class CloudSyncProvider extends ChangeNotifier
     final mutationId = _revocationMutationIdFactory();
     final E2eeCurrentDeviceSelfRevocationPreparation preparation;
     try {
-      preparation = await preparer(
-        session: session,
-        mutationId: mutationId,
-      );
+      preparation = await preparer(session: session, mutationId: mutationId);
     } catch (error, stackTrace) {
       _endSessionMutation();
       _recordDeviceFailure(error, stackTrace, operation: '准备当前设备自撤销');
@@ -1293,8 +1279,9 @@ final class CloudSyncProvider extends ChangeNotifier
         'SYNC_SELF_REVOCATION_SUPERSEDED',
         false,
       ),
-      E2eeCurrentDeviceSelfRevocationConfirmed() =>
-        throw StateError('自撤销 confirmed 不得进入未确认分支'),
+      E2eeCurrentDeviceSelfRevocationConfirmed() => throw StateError(
+        '自撤销 confirmed 不得进入未确认分支',
+      ),
     };
     _deviceError = CloudSyncException(
       kind: CloudSyncFailureKind.conflict,

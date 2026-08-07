@@ -129,11 +129,11 @@ final class E2eeDeviceStateKeyTransitionCommitter
   @override
   Future<void> commit({
     required E2eeAccountKeyTransitionBinding binding,
-    required E2eeDataRekeyReadyConfirmation confirmation,
+    required E2eeDataRekeyFinalizedExecution execution,
   }) async {
     if (_running) throw StateError('device_state_key_transition_busy');
     _requireSameBinding(binding, _plan.binding);
-    _requireConfirmationMatchesPlan(confirmation, _plan);
+    _requireExecutionMatchesPlan(execution, _plan);
     _running = true;
     try {
       final position = await _ensureUnprunedStatePublished();
@@ -452,11 +452,10 @@ bool _sameSelfRevocationBinding(
   return left.hasSameSecurityBinding(right);
 }
 
-void _requireConfirmationMatchesPlan(
-  E2eeDataRekeyReadyConfirmation confirmation,
+void _requireExecutionMatchesPlan(
+  E2eeDataRekeyFinalizedExecution execution,
   E2eeDeviceStateKeyTransitionPlan plan,
 ) {
-  final execution = confirmation.execution;
   final completion = execution.result.completion;
   if (execution.operationId != plan.binding.rekeyOperationId ||
       execution.userId != plan.binding.userId ||

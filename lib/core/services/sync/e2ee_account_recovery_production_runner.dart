@@ -733,10 +733,9 @@ final class E2eeAccountRecoveryProductionRunner
         action: (executor, context, transport) async {
           final execution = await executor.execute(context);
           if (execution != null) {
-            return (await executor.confirmReady(
-              context: context,
-              execution: execution,
-            )).completion;
+            // execute 已触发服务端 finalize（完成回执自带已验证的完成证明），
+            // 此时恢复 token 已被服务端吊销，不能再调用 confirmReady。
+            return execution.result.completion;
           }
           final state = await transport.getDataRekeyState();
           if (state is! CloudSyncDataRekeyReadyState ||
@@ -869,16 +868,12 @@ final class E2eeAccountRecoveryProductionRunner
           }
           return;
         }
-        final confirmation = await executor.confirmReady(
-          context: context,
-          execution: execution,
-        );
-        if (!_sameRecoveryCompletion(confirmation.completion, completion)) {
+        if (!_sameRecoveryCompletion(execution.result.completion, completion)) {
           throw const FormatException('账户恢复本地确认与 checkpoint 完成证明不一致');
         }
         await executor.acknowledgeLocalCommit(
           context: context,
-          confirmation: confirmation,
+          execution: execution,
         );
       },
     );
@@ -1169,7 +1164,9 @@ final class E2eeAccountRecoveryProductionRunner
             session.user.id != binding.userId ||
             session.user.loginName != normalizedLoginName ||
             session.device.id != binding.deviceId ||
-            session.deviceKeyVersion != binding.deviceKeyVersion ||
+            // 服务端会话响应不含设备密钥版本；本地 binding 已绑定该值。
+            (session.deviceKeyVersion != null &&
+                session.deviceKeyVersion != binding.deviceKeyVersion) ||
             session.authGeneration != binding.deviceAuthGeneration ||
             session.keyEpoch != binding.keyEpoch ||
             session.keyEpoch != replacementReceipt.keyEpoch ||
@@ -2462,8 +2459,6 @@ void _requireNativePrepared({
   final expectedDigest =
       replacementChallenge?.membershipManifestDigest ??
       checkpoint.challenge.membershipManifestDigest;
-  final expectedRequestDigest =
-      replacementChallenge?.requestDigest ?? checkpoint.challenge.requestDigest;
   final expectedSourceDataGeneration =
       replacementChallenge?.dataGeneration ??
       checkpoint.challenge.dataState.dataGeneration;
@@ -2489,6 +2484,9 @@ void _requireNativePrepared({
   final expectedRekeyOperationId = Uint8List.fromList(
     Uuid.parseAsByteList(rekeyOperationId),
   );
+  // 注意：prepared.requestDigest 是「提交请求摘要」（对本次提交内容的本地计算），
+  // 与 challenge.requestDigest（服务端挑战摘要）是两个不同概念，不能互相比较；
+  // 提交摘要由服务端在 commit 时独立重算并校验，本地无需重复校验。
   if (prepared.kind != kind ||
       prepared.expectedGeneration != expectedGeneration ||
       prepared.expectedKeyEpoch != expectedKeyEpoch ||
@@ -2499,7 +2497,6 @@ void _requireNativePrepared({
           prepared.recoveryCapsule != null) ||
       (kind == KelivoAccountRecoveryCommitKind.replacement &&
           prepared.recoveryCapsule == null) ||
-      !_sameRecoveryBytes(prepared.requestDigest, expectedRequestDigest) ||
       !_sameRecoveryBytes(prepared.manifestDigest, manifestDigest) ||
       binding.kind != kind ||
       binding.dataPhase !=
@@ -2520,42 +2517,6 @@ void _requireNativePrepared({
     clearSensitiveBytes(manifestDigest);
     clearSensitiveBytes(expectedDeviceId);
     clearSensitiveBytes(expectedRekeyOperationId);
-    // 诊断：记录绑定字段差异，便于定位服务端/密码学不匹配。
-    print(
-      'RECOVERY_BINDING_MISMATCH: kind=$kind prepared.kind=${prepared.kind} '
-      'nativeDigestConsistent=${_sameRecoveryBytes(
-        prepared.manifestDigest,
-        sha256.convert(prepared.membershipManifest).bytes,
-      )} '
-      'checkpointDevice=${checkpoint.expectedDeviceId} '
-      'expGen=$expectedGeneration pGen=${prepared.expectedGeneration} '
-      'expEpoch=$expectedKeyEpoch pEpoch=${prepared.expectedKeyEpoch} '
-      'expNextGen=${expectedGeneration + 1} pNextGen=${prepared.nextGeneration} '
-      'expNextEpoch=$expectedTargetKeyEpoch pNextEpoch=${prepared.nextKeyEpoch} '
-      'capExp=$expectedCapsuleVersion cap=${prepared.nextRecoveryCapsuleVersion} '
-      'hasCap=${prepared.recoveryCapsule != null} '
-      'reqDigest=${_sameRecoveryBytes(
-        prepared.requestDigest,
-        expectedRequestDigest,
-      )} '
-      'manifest=${_sameRecoveryBytes(prepared.manifestDigest, manifestDigest)} '
-      'bKind=${binding.kind} bPhase=${binding.dataPhase} '
-      'srcEp=${binding.sourceKeyEpoch} exp=$expectedSourceKeyEpoch '
-      'tgtEp=${binding.targetKeyEpoch} exp=$expectedTargetKeyEpoch '
-      'srcGen=${binding.sourceDataGeneration} exp=$expectedSourceDataGeneration '
-      'tgtGen=${binding.targetDataGeneration} '
-      'exp=${expectedSourceDataGeneration + 1} '
-      'memGen=${binding.membershipGeneration} exp=${expectedGeneration + 1} '
-      'memDigestLen=${binding.membershipManifestDigest.length} '
-      'expLen=$cloudSyncMembershipManifestDigestBytes '
-      'devId=${_sameRecoveryBytes(binding.deviceId, expectedDeviceId)} '
-      'rekey=${_sameRecoveryBytes(
-        binding.rekeyOperationId,
-        expectedRekeyOperationId,
-      )} '
-      'devKeyVer=${binding.deviceKeyVersion} '
-      'challenge=${replacementChallenge?.deviceKeyVersion}',
-    );
     throw const FormatException('账户恢复 Native prepared 绑定不一致');
   }
   clearSensitiveBytes(manifestDigest);

@@ -287,7 +287,7 @@ abstract interface class E2eeAccountKeyTransitionRemoteCommit {
 abstract interface class E2eeAccountKeyTransitionLocalCommitter {
   Future<void> commit({
     required E2eeAccountKeyTransitionBinding binding,
-    required E2eeDataRekeyReadyConfirmation confirmation,
+    required E2eeDataRekeyFinalizedExecution execution,
   });
 
   Future<void> requireCommitted({
@@ -335,17 +335,12 @@ final class E2eeAccountKeyTransitionCoordinator {
         return receipt;
       }
       _requireExecutionMatchesTransition(execution, binding);
-      final confirmation = await _dataRekeyExecutor.confirmReady(
-        context: context,
-        execution: execution,
-      );
-      await _localCommitter.commit(
-        binding: binding,
-        confirmation: confirmation,
-      );
+      // execute 已触发服务端 finalize（回执自带已验证完成证明），
+      // 服务端 data-rekey 已脱离 ready 状态，无需也不能再 confirmReady。
+      await _localCommitter.commit(binding: binding, execution: execution);
       await _dataRekeyExecutor.acknowledgeLocalCommit(
         context: context,
-        confirmation: confirmation,
+        execution: execution,
       );
       await _remoteCommit.complete(receipt);
       return receipt;

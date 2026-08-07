@@ -11,7 +11,6 @@ import 'package:Kelivo/core/services/workspace/device_state_blob_store.dart';
 import 'package:Kelivo/utils/app_directories.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
-import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 import 'package:path/path.dart' as p;
 
 E2eeAccountRecoveryRunnerFactory _recoveryRunnerFactory(
@@ -40,9 +39,7 @@ void main() {
 
   testWidgets('账户注册保存介质后清除数据可恢复', (tester) async {
     final installRoot = await AppDirectories.getInstallationRootDirectory();
-    final testRoot = Directory(
-      p.join(installRoot.path, 'kelivo-recovery-e2e'),
-    );
+    final testRoot = Directory(p.join(installRoot.path, 'kelivo-recovery-e2e'));
     if (await testRoot.exists()) {
       await testRoot.delete(recursive: true);
     }
@@ -96,10 +93,29 @@ void main() {
       encryptedRecoveryMedia: recoveryMedia!,
     );
     final recovered = await providerB.startAccountRecovery(command);
-    expect(recovered, isTrue, reason: '恢复应成功: ${providerB.lastError}');
-    expect(providerB.signedIn, isTrue);
+    expect(
+      recovered,
+      isFalse,
+      reason: '恢复需切换工作区，应返回重启请求: ${providerB.lastError}',
+    );
+    expect(providerB.workspaceRestartRequired, isTrue);
+    expect(providerB.lastError, isNull);
     providerB.dispose();
     await workspaceB.close();
+
+    // 重启后：重新打开同一安装根，恢复的会话应可用。
+    final workspaceB2 = await AccountWorkspaceRuntime.bootstrap(
+      installationRoot: rootB,
+      sessionTokenStore: const SecureAccountSessionTokenStore(),
+    );
+    final providerB2 = CloudSyncProvider.controlPlaneOnly(
+      workspaceB2,
+      accountRecoveryRunnerFactory: _recoveryRunnerFactory(workspaceB2),
+    );
+    await providerB2.initialize();
+    expect(providerB2.signedIn, isTrue, reason: '重启后应已恢复会话');
+    providerB2.dispose();
+    await workspaceB2.close();
 
     await testRoot.delete(recursive: true);
   });

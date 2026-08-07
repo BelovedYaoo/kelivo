@@ -263,9 +263,8 @@ final class E2eeDataRekeyExecutor {
 
   Future<void> acknowledgeLocalCommit({
     required E2eeDataRekeyExecutionContext context,
-    required E2eeDataRekeyReadyConfirmation confirmation,
+    required E2eeDataRekeyFinalizedExecution execution,
   }) async {
-    final execution = confirmation.execution;
     _requireExecutionMatchesContext(execution, context);
     final current = await _journal.readActive();
     if (current != null) {

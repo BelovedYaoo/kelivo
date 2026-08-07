@@ -23,7 +23,13 @@ Uint8List encodeSensitiveUtf8(String value) {
 }
 
 void clearSensitiveBytes(Uint8List? bytes) {
-  bytes?.fillRange(0, bytes.length, 0);
+  if (bytes == null) return;
+  try {
+    bytes.fillRange(0, bytes.length, 0);
+  } on UnsupportedError {
+    // Native 绑定层可能返回不可变视图（asUnmodifiableView）：
+    // 底层内存由创建方管理，Dart 侧无法（也无需）清零。
+  }
 }
 
 bool sensitiveUtf8Equals(String left, String right) {
