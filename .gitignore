@@ -66,3 +66,4 @@ internationalization.md
 .tmp
 /android/build/
 /dependencies/*/.dart_tool/
+**/ios/build/
