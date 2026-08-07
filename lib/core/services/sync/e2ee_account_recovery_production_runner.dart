@@ -2523,6 +2523,11 @@ void _requireNativePrepared({
     // 诊断：记录绑定字段差异，便于定位服务端/密码学不匹配。
     print(
       'RECOVERY_BINDING_MISMATCH: kind=$kind prepared.kind=${prepared.kind} '
+      'nativeDigestConsistent=${_sameRecoveryBytes(
+        prepared.manifestDigest,
+        sha256.convert(prepared.membershipManifest).bytes,
+      )} '
+      'checkpointDevice=${checkpoint.expectedDeviceId} '
       'expGen=$expectedGeneration pGen=${prepared.expectedGeneration} '
       'expEpoch=$expectedKeyEpoch pEpoch=${prepared.expectedKeyEpoch} '
       'expNextGen=${expectedGeneration + 1} pNextGen=${prepared.nextGeneration} '
