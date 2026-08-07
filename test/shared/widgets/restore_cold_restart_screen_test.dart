@@ -31,17 +31,17 @@ void main() {
     expect(find.text('One more restart is required'), findsOneWidget);
     expect(find.text('business ready'), findsNothing);
 
-    await tester.tap(find.text('Restart Kelivo'));
+    await tester.tap(find.text('Restart Olivia'));
     await tester.pumpAndSettle();
 
     expect(attempts, 1);
     expect(reportedErrors, hasLength(1));
     expect(
       find.text(
-        'Kelivo could not restart automatically. Fully close it, then open it again.',
+        'Olivia could not restart automatically. Fully close it, then open it again.',
       ),
       findsOneWidget,
     );
-    expect(find.text('Restart Kelivo'), findsOneWidget);
+    expect(find.text('Restart Olivia'), findsOneWidget);
   });
 }

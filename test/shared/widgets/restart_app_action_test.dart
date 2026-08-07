@@ -103,7 +103,7 @@ void main() {
     expect(find.text('旧工作区操作'), findsNothing);
     expect(find.text('重启以切换工作区'), findsOneWidget);
 
-    await tester.tap(find.text('重启 Kelivo'));
+    await tester.tap(find.text('重启 Olivia'));
     await tester.pump();
 
     expect(oldWorkspaceTapCount, 0);
@@ -132,14 +132,14 @@ void main() {
         ),
       );
 
-      await tester.tap(find.text('Restart Kelivo'));
+      await tester.tap(find.text('Restart Olivia'));
       await tester.pump();
 
       expect(restartCount, 1);
       expect(reportedErrors, isEmpty);
       expect(
         find.text(
-          'Kelivo could not restart automatically. Fully close it, then open it again.',
+          'Olivia could not restart automatically. Fully close it, then open it again.',
         ),
         findsNothing,
       );
@@ -150,12 +150,12 @@ void main() {
       expect(reportedErrors.single.exception, isA<TimeoutException>());
       expect(
         find.text(
-          'Kelivo could not restart automatically. Fully close it, then open it again.',
+          'Olivia could not restart automatically. Fully close it, then open it again.',
         ),
         findsOneWidget,
       );
 
-      await tester.tap(find.text('Restart Kelivo'));
+      await tester.tap(find.text('Restart Olivia'));
       await tester.pump();
       expect(restartCount, 2);
 
@@ -256,19 +256,19 @@ void main() {
         ),
       );
 
-      await tester.tap(find.text('Restart Kelivo'));
+      await tester.tap(find.text('Restart Olivia'));
       await tester.pump();
 
       expect(reportedErrors, hasLength(1));
       expect(find.text('Old workspace'), findsNothing);
       expect(
         find.text(
-          'Kelivo could not restart automatically. Fully close it, then open it again.',
+          'Olivia could not restart automatically. Fully close it, then open it again.',
         ),
         findsOneWidget,
       );
 
-      await tester.tap(find.text('Restart Kelivo'));
+      await tester.tap(find.text('Restart Olivia'));
       await tester.pump();
       expect(restartCount, 2);
     } finally {
@@ -333,7 +333,7 @@ void main() {
     expect(find.text('Restart prompt'), findsOneWidget);
     expect(
       find.text(
-        'Kelivo could not restart automatically. Fully close it, then open it again.',
+        'Olivia could not restart automatically. Fully close it, then open it again.',
       ),
       findsOneWidget,
     );
