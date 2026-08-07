@@ -139,7 +139,7 @@ void main() {
       preferenceStore: preferenceStore,
       registeredPreferencePrefixes: prefixes,
       retirePlaintextBackups: () async => retirementCalls += 1,
-    ).retire();
+    ).retire(localNamespaceIsTruth: false);
 
     for (final prefix in prefixes) {
       for (final key in _expectedRetiredPreferenceKeys) {
@@ -159,6 +159,55 @@ void main() {
     expect(retirementCalls, 1);
   });
 
+  test('本地工作区退役不删除本地前缀的真相键', () async {
+    const activeWorkspaceKey =
+        'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
+    const prefixes = <String>{
+      'flutter.',
+      'kelivo.account.$activeWorkspaceKey.',
+    };
+    final initialPreferences = <String, Object>{};
+    for (final prefix in prefixes) {
+      for (final key in _expectedRetiredPreferenceKeys) {
+        initialPreferences['$prefix$key'] = 'retired';
+      }
+    }
+    initialPreferences.addAll(<String, Object>{
+      'flutter.unrelated_preference': 'kept',
+      'flutter.theme_mode_v1': 'dark',
+    });
+    final preferenceStore = _MemoryPlaintextRemoteBackupPreferenceStore(
+      initialPreferences,
+    );
+    var retirementCalls = 0;
+
+    await PlaintextRemoteBackupRetirement(
+      preferenceStore: preferenceStore,
+      registeredPreferencePrefixes: prefixes,
+      retirePlaintextBackups: () async => retirementCalls += 1,
+    ).retire(localNamespaceIsTruth: true);
+
+    // 本地工作区没有 E2EE Vault：本地前缀下的助手/供应商等键是唯一真相，
+    // 不得当作明文镜像删除。
+    for (final key in _expectedRetiredPreferenceKeys) {
+      expect(
+        preferenceStore.containsKey('flutter.$key'),
+        isTrue,
+        reason: '本地前缀键 $key 不应被退役',
+      );
+    }
+    // 账号命名空间仍是明文镜像，照旧移除。
+    for (final key in _expectedRetiredPreferenceKeys) {
+      expect(
+        preferenceStore.containsKey('kelivo.account.$activeWorkspaceKey.$key'),
+        isFalse,
+      );
+    }
+    expect(preferenceStore['flutter.unrelated_preference'], 'kept');
+    expect(preferenceStore['flutter.theme_mode_v1'], 'dark');
+    expect(retirementCalls, 1);
+  });
+
   test('发现未注册账号命名空间时在任何删除前显式失败', () async {
     const unknownWorkspaceKey =
         'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
@@ -174,7 +223,7 @@ void main() {
         preferenceStore: preferenceStore,
         registeredPreferencePrefixes: const <String>{'flutter.'},
         retirePlaintextBackups: () async => retirementCalled = true,
-      ).retire(),
+      ).retire(localNamespaceIsTruth: false),
       throwsA(
         isA<StateError>().having(
           (error) => error.message,
@@ -208,7 +257,7 @@ void main() {
         preferenceStore: preferenceStore,
         registeredPreferencePrefixes: const <String>{'flutter.'},
         retirePlaintextBackups: () async => retirementCalled = true,
-      ).retire(),
+      ).retire(localNamespaceIsTruth: false),
       throwsA(
         isA<StateError>().having(
           (error) => error.message,
@@ -234,8 +283,8 @@ void main() {
       retirePlaintextBackups: () async => retirementCalls += 1,
     );
 
-    await retirement.retire();
-    await retirement.retire();
+    await retirement.retire(localNamespaceIsTruth: false);
+    await retirement.retire(localNamespaceIsTruth: false);
 
     expect(preferenceStore.containsKey('flutter.provider_configs_v1'), isFalse);
     expect(preferenceStore.removeCallCount, 1);
@@ -252,7 +301,7 @@ void main() {
         retirePlaintextBackups: () async {
           throw StateError('managed_root_retirement_failed');
         },
-      ).retire(),
+      ).retire(localNamespaceIsTruth: false),
       throwsA(
         isA<StateError>().having(
           (error) => error.message,
@@ -277,7 +326,7 @@ void main() {
         preferenceStore: _createDurablePreferencesStore(platform),
         registeredPreferencePrefixes: const <String>{'flutter.'},
         retirePlaintextBackups: () async => retirementCalled = true,
-      ).retire(),
+      ).retire(localNamespaceIsTruth: false),
       throwsStateError,
     );
 

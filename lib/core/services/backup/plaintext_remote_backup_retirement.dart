@@ -117,13 +117,13 @@ final class PlaintextRemoteBackupRetirement {
             PlatformDurableSharedPreferencesStore.forCurrentPlatform(),
         registeredPreferencePrefixes: registeredPreferencePrefixes,
         retirePlaintextBackups: temporaryRootSession.retirePlaintextBackups,
-      ).retire();
+      ).retire(localNamespaceIsTruth: workspaceRuntime.current.isLocal);
     } finally {
       await temporaryRootSession.close();
     }
   }
 
-  Future<void> retire() async {
+  Future<void> retire({required bool localNamespaceIsTruth}) async {
     _validateRegisteredPreferencePrefixes();
     final existingKeys = await preferenceStore.readRawKeys();
     for (final rawKey in existingKeys) {
@@ -135,9 +135,13 @@ final class PlaintextRemoteBackupRetirement {
         );
       }
     }
+    // 本地工作区没有 E2EE Vault，本地前缀下的键（助手、MCP 等）就是唯一真相，
+    // 不能当作"明文镜像"删除；只有账号工作区（配置真相在 Vault）才需要
+    // 把介质上的明文镜像一并移除。
     final retiredRawKeys = <String>{
       for (final prefix in registeredPreferencePrefixes)
-        for (final key in retiredPreferenceKeys) '$prefix$key',
+        if (!localNamespaceIsTruth || prefix != _localPreferencePrefix)
+          for (final key in retiredPreferenceKeys) '$prefix$key',
     };
     final existingRetiredKeys =
         existingKeys.where(retiredRawKeys.contains).toList()..sort();

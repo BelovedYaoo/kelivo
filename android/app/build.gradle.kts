@@ -62,8 +62,6 @@ android {
 
     // 当前发布目标只有 ARM64 真机。flutter 插件会把 abiFilters 重置为全 ABI，
     // 且 variant 创建后修改 ABI 不生效；用打包排除直接丢弃非 arm64 的 so。
-    // 当前发布目标只有 ARM64 真机。flutter 插件会把 abiFilters 重置为全 ABI，
-    // 且 variant 创建后修改 ABI 不生效；用打包排除直接丢弃非 arm64 的 so。
     packaging {
         jniLibs {
             excludes += listOf(
