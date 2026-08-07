@@ -139,3 +139,4 @@
   - 工程：#97 protocol rustfmt 通过、#93 构建产物/依赖缓存退出跟踪；#63 actionlint 本机工具不可用（下载 403），待工具就绪
 - 验证：dart analyze 0 error；核心套件 206 项通过（唯一跳过=安全槽"生产 runner 推进成员锚"）；安全槽基线（checkpoint 5 + OPAQUE + MCP 加密）通过
 - 验收验证边界（需真机/运行时）：Android manifest 备份禁用真机构建、MCP 加密真实应用读写、global-proxy 第二设备同步水合、OPAQUE 登录 UI 交互
+- 已完成（2026-08-07）：账户恢复端到端修复。恢复失败链路（"密码介质正确但云同步失败"）根因：native 绑定校验把 prepared 提交摘要误与挑战摘要比较、finalize 后误调 confirmReady（恢复 token 已被服务端吊销）、finalize 清空 token 导致客户端激活阶段无法读冻结历史、不可变字节视图清零崩溃。修复：移除错误比较与 finalize 后 confirmReady（完成回执自带已验证证明）；服务端 finalize 保留 token 至 TTL 且释放恢复锁，recovery token 认证与锁解耦（锁存在但过期视为失效）；clearSensitiveBytes 容忍不可变视图；恢复失败仅输出静态事件码。服务端已部署生产（bfc8aca），客户端已推送（fa8fefb2）；AVD 集成测试全流程通过（注册→介质→清除→恢复→重启→会话可用）。
