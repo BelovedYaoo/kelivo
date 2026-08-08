@@ -150,3 +150,10 @@
   - 发布门禁：Android release 构建受阻于本机缺签名密钥（CI 注入，key.properties 被忽略不提交），签名验证属 CI 职责；本机已验证 debug arm64-only 构建与 secure-core 隔离测试。
 - 已完成（2026-08-08 上游合入）：将 kelivo 官方 master（8758d2f1，69 提交）完整合入 main（3f8fc051）。143 个冲突全部解决：E2EE 核心（SQLCipher schema/备份导入恢复/云同步 provider/退役逻辑）保留我方实现；上游 theme 生态完整合入（app_semantic_colors/custom_theme + SettingsProvider 自定义主题逻辑移植 + 20 个 ARB 键，8f0533b9）；ASR/business 上游功能未采用；MCP OAuth 原生（McpOAuth*）与 ours MainActivity 不匹配已移除；上游新增且引用其独有 API 的测试删除。验证：根与子包 analyze 0 error；secure-core 隔离 194/194；backup/providers/database/services 目录测试通过（仅预存 #115/#116 与 secure-core 域）；Android arm64 APK 构建通过。全量并发测试失败（~162）为 Windows DLL 锁/并发资源问题（分目录跑仅预存+secure-core 域失败）。
 - 已完成（2026-08-08 功能缺口补齐）：ASR 配置（Speech Recognition 区）、搜索服务编辑器（Add Search Service + API 键管理）、图片设置（Image Processing 质量/压缩）三个上游功能完整合入（c3ca209e）；SettingsProvider 移植 ASR/图片质量 API，search_service.dart 采用上游完整版（extraApiKeys 等），ARB 补 95 键；analyze 0 error、云同步/settings 测试全过、模拟器三功能 UI 验证通过。
+- 已完成（2026-08-08 上游 commit 审查与修复，main@d2b2a76f）：分叉后上游新增 2 提交（4c67c281 临时会话编辑已移植、a100a41a 纯删文档），并对合并前全部 commit 审查（两 scout 确认我方保留实现缺 16 项修复）。已移植 13 项：
+  - A 级 9 项（ef483b99）：Gemini functionCall id、禁用服务器不阻塞拆除、工具不可用明确报错、additionalProperties 清洗保留、流错误正文/barrier try-finally、生成前 await ready、loadTimelinePage 缓存写空（先加载消息顺序）、Cherry 路径反斜杠归一化、Cherry v7+ 版本门禁。
+  - B 级（17e8d394/067e0d2f）：版本选择改真实版本号（删除版本回退不再索引错位）、chat_controller 先加载版本选择再窗口、MCP SSE 多事件边界解析（mcp_client 子包独立验证 2/2）。
+  - C 级（d2b2a76f）：MCP 同名工具消歧（路由快照 _McpToolRoute/McpToolRouteSnapshot）；适配上游重构副作用（_toolRoutes 改回 connectedServers、ImageContent.data 修回 ?? ''）。
+  - 判定不适用：bf5224c9（OpenRouter reasoning 双 style 已含）；上游新增测试依赖缺失的 business_test_harness（E2EE 版无 business_repository 层），不移植。
+  - 记录为已知风险（不移植）：bde7a76e（编辑助手消息作新回复需 repository 截断 _truncateLinearMessageGroupsAfter，E2EE 结构差异风险高）、cbac3dc3（reasoning signatures 858 行 api 层大改）、f5c65d46（session 复用 3227 行重构）。
+  - 验证：analyze 0 error；mcp/tool_handler/backup/云同步相关测试通过（仅预存 #115/#116）；Android debug arm64 APK 构建通过；已推送（466864df..d2b2a76f）。
