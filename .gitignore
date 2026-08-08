@@ -63,7 +63,4 @@ internationalization.md
 /.agent/
 /.agents/
 /skills-lock.json
-.tmp
-/android/build/
-/dependencies/*/.dart_tool/
-**/ios/build/
+/.scratch/
