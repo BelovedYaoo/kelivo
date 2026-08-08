@@ -827,7 +827,10 @@ class McpProvider extends ChangeNotifier with BatchedChangeNotifier {
         await _persist();
         notifyListeners();
         if (!updated.enabled) {
-          await disconnect(updated.id);
+          // The disabled state is already persisted. Tear down the old
+          // connection in the background so settings UI does not wait on a
+          // remote session DELETE or a connection attempt finishing.
+          unawaited(disconnect(updated.id));
         } else {
           await disconnect(updated.id);
           unawaited(connect(updated.id));

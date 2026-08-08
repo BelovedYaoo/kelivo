@@ -1354,6 +1354,7 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     if (loadedSlots.length != page.slots.length) {
       throw StateError('timeline_selected_revision_shadow_missing');
     }
+    await _loadMessageOrder(conversationId);
     _cacheLoadedMessages(conversationId, messages);
     await _cacheMessageArtifacts(messages);
     return LoadedTimelinePage(
@@ -1533,10 +1534,15 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
         message.id: message,
       for (final message in messages) message.id: message,
     };
-    _messagesCache[conversationId] = [
-      for (final id in _messageOrderIds[conversationId] ?? const <String>[])
-        if (byId[id] != null) byId[id]!,
-    ];
+    // Without the order skeleton an intersection would drop every message just
+    // loaded; keep the merged insertion order instead of filtering to empty.
+    final order = _messageOrderIds[conversationId];
+    _messagesCache[conversationId] = order == null
+        ? byId.values.toList(growable: true)
+        : [
+            for (final id in order)
+              if (byId[id] != null) byId[id]!,
+          ];
     _touchMessageCache(conversationId);
     _enforceMessageCacheLimits();
   }
@@ -4779,6 +4785,38 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     required Iterable<LocalMessageAttachmentInput> attachments,
   }) async {
     if (!_initialized) await init();
+    final temporaryOriginal = _cachedTemporaryMessage(messageId);
+    if (temporaryOriginal != null) {
+      final conversationId = temporaryOriginal.conversationId;
+      final conversation = _draftConversations[conversationId];
+      final messages = _messagesCache[conversationId];
+      if (conversation == null || messages == null) return null;
+
+      final groupId = temporaryOriginal.groupId ?? temporaryOriginal.id;
+      final versions = messages
+          .where((message) => (message.groupId ?? message.id) == groupId)
+          .map((message) => message.version);
+      final nextVersion = versions.isEmpty
+          ? 0
+          : versions.reduce((a, b) => a > b ? a : b) + 1;
+      final newMsg = ChatMessage(
+        role: temporaryOriginal.role,
+        content: content,
+        conversationId: conversationId,
+        modelId: temporaryOriginal.modelId,
+        providerId: temporaryOriginal.providerId,
+        groupId: groupId,
+        version: nextVersion,
+      );
+
+      messages.add(newMsg);
+      conversation.messageIds.add(newMsg.id);
+      conversation.versionSelections[groupId] = nextVersion;
+      conversation.updatedAt = DateTime.now();
+      notifyListeners();
+      return newMsg;
+    }
+
     final original = await _repo.getMessage(messageId);
     if (original == null) return null;
     final preparedAttachments = await _prepareLocalAttachments(attachments);

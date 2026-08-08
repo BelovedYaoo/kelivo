@@ -122,6 +122,11 @@ class ChatActionResult {
 /// - Handle stream chunks (reasoning, tools, content)
 /// - Manage streaming state
 class ChatActions {
+  @visibleForTesting
+  static String resolveStreamErrorContent({
+    required String partialContent,
+    required String errorText,
+  }) => partialContent.isEmpty ? errorText : partialContent;
   static bool shouldPhysicallyRemoveRegenerationTail({
     required bool deleteTrailingEnabled,
     required bool isTemporaryConversation,
@@ -767,9 +772,13 @@ class ChatActions {
     }
 
     final settings = contextProvider.read<SettingsProvider>();
-    final assistant = contextProvider
-        .read<AssistantProvider>()
-        .currentAssistant;
+    final assistantProvider = contextProvider.read<AssistantProvider>();
+    try {
+      await assistantProvider.ready;
+    } catch (e) {
+      return ChatActionResult.error(e.toString());
+    }
+    final assistant = assistantProvider.currentAssistant;
     final assistantId = assistant?.id;
     // Capture approval service reference before async gap
     ToolApprovalService? approvalService;
@@ -966,9 +975,13 @@ class ChatActions {
   }) async {
     // Avoid using BuildContext across async gaps (this class holds a BuildContext).
     final settings = contextProvider.read<SettingsProvider>();
-    final assistant = contextProvider
-        .read<AssistantProvider>()
-        .currentAssistant;
+    final assistantProvider = contextProvider.read<AssistantProvider>();
+    try {
+      await assistantProvider.ready;
+    } catch (e) {
+      return ChatActionResult.error(e.toString());
+    }
+    final assistant = assistantProvider.currentAssistant;
     // Capture approval service reference before async gap
     ToolApprovalService? regenApprovalService;
     AskUserInteractionService? regenAskUserService;
@@ -1181,9 +1194,13 @@ class ChatActions {
     bool allowImagesApiRouting = true,
   }) async {
     final settings = contextProvider.read<SettingsProvider>();
-    final assistant = contextProvider
-        .read<AssistantProvider>()
-        .currentAssistant;
+    final assistantProvider = contextProvider.read<AssistantProvider>();
+    try {
+      await assistantProvider.ready;
+    } catch (e) {
+      return ChatActionResult.error(e.toString());
+    }
+    final assistant = assistantProvider.currentAssistant;
     ToolApprovalService? approvalService;
     AskUserInteractionService? askUserService;
     try {
@@ -1917,9 +1934,13 @@ class ChatActions {
 
     streamController.cleanupTimers(messageId);
     streamController.finishReasoningIfNeeded(messageId);
-    final displayContent = state.fullContentRaw.isEmpty
+    final partialContent = state.fullContentRaw.isEmpty
         ? ''
         : _transformAssistantContent(state, state.fullContentRaw);
+    final displayContent = resolveStreamErrorContent(
+      partialContent: partialContent,
+      errorText: errorText,
+    );
     var errorMessage = _streamingMessageSnapshot(state).copyWith(
       content: displayContent,
       totalTokens: state.totalTokens,
@@ -1939,7 +1960,10 @@ class ChatActions {
       }
       streamController.removeStreamingNotifier(messageId);
       _setConversationLoading(conversationId, false);
-      await _conversationStreams.remove(conversationId)?.cancel();
+      // The sequential stream drain owns source cancellation after this error
+      // handler returns. Re-entering its barrier cancel here would wait on this
+      // handler itself and prevent the UI error callback below from firing.
+      _conversationStreams.remove(conversationId);
       onStreamError?.call(errorText);
       onStreamFinished?.call();
       await _finishIosBackgroundGeneration(success: false, detail: errorText);

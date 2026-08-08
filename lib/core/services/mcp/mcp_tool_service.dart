@@ -77,16 +77,12 @@ class McpToolService extends ChangeNotifier {
     }
     if (res == null) {
       if (usedServer != null) {
-        final errMsg = mcpProvider.errorFor(usedServer.id) ?? 'Unknown error';
-        final schema = usedServer.tools
-            .firstWhere((t) => t.name == toolName)
-            .schema;
+        final errMsg =
+            mcpProvider.errorFor(usedServer.id) ?? 'MCP server is unavailable.';
         return _renderToolErrorForModel(
           serverName: usedServer.name,
           toolName: toolName,
-          arguments: arguments,
           errorMessage: errMsg,
-          schema: schema,
         );
       }
       return '';
@@ -183,14 +179,12 @@ class McpToolService extends ChangeNotifier {
       if (has) {
         final res = await mcpProvider.callTool(s.id, toolName, arguments);
         if (res == null) {
-          final errMsg = mcpProvider.errorFor(s.id) ?? 'Unknown error';
-          final schema = s.tools.firstWhere((t) => t.name == toolName).schema;
+          final errMsg =
+              mcpProvider.errorFor(s.id) ?? 'MCP server is unavailable.';
           return _renderToolErrorForModel(
             serverName: s.name,
             toolName: toolName,
-            arguments: arguments,
             errorMessage: errMsg,
-            schema: schema,
           );
         }
         final buf = StringBuffer();
@@ -266,21 +260,14 @@ class McpToolService extends ChangeNotifier {
   String _renderToolErrorForModel({
     required String serverName,
     required String toolName,
-    required Map<String, dynamic> arguments,
     required String errorMessage,
-    Map<String, dynamic>? schema,
   }) {
-    // Provide a concise JSON for the model to self-correct and retry
     final map = <String, dynamic>{
       'type': 'tool_error',
-      'error': 'invalid_arguments',
+      'error': 'tool_unavailable',
       'message': errorMessage,
       'tool': toolName,
       'server': serverName,
-      'lastArguments': arguments,
-      if (schema != null && schema.isNotEmpty) 'parametersSchema': schema,
-      'instruction':
-          'Revise arguments to satisfy parametersSchema, then call the same tool again.',
     };
     return const JsonEncoder.withIndent('  ').convert(map);
   }
