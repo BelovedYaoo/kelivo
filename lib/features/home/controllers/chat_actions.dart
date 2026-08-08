@@ -634,8 +634,11 @@ class ChatActions {
     return _BarrierStreamSubscription<T>(sourceSubscription, () async {
       terminalQueued = true;
       events.clear();
-      await sourceSubscription.cancel();
-      await drainFuture;
+      try {
+        await sourceSubscription.cancel();
+      } finally {
+        await drainFuture;
+      }
     });
   }
 
