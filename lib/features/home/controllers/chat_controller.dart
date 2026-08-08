@@ -115,8 +115,8 @@ class ChatController extends ChangeNotifier {
       _totalMessageCount = 0;
       _versionSelections = <String, int>{};
     } else {
-      await _loadInitialMessageWindow(conversation.id);
       _loadVersionSelections();
+      await _loadInitialMessageWindow(conversation.id);
     }
     notifyListeners();
   }

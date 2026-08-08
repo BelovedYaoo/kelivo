@@ -8,6 +8,7 @@ final class MessageRenderModel {
     required this.slotId,
     required this.message,
     required this.versions,
+    required this.availableVersions,
     required this.versionCount,
     required this.selectedVersionIndex,
     required this.showContextDivider,
@@ -17,6 +18,7 @@ final class MessageRenderModel {
   final String slotId;
   final ChatMessage message;
   final List<ChatMessage> versions;
+  final List<int> availableVersions;
   final int versionCount;
   final int selectedVersionIndex;
   final bool showContextDivider;
@@ -75,14 +77,19 @@ final class MessageRenderModelProjector {
     final versionCount = (authoritativeVersionCount ?? loadedVersionCount)
         .clamp(loadedVersionCount, 1 << 31)
         .toInt();
-    final selectedIndex = (selectedVersion ?? message.version).clamp(
-      0,
-      versionCount - 1,
-    );
+    final availableVersions = sortedVersions.isEmpty
+        ? <int>[message.version]
+        : sortedVersions.map((version) => version.version).toList();
+    final effectiveSelectedVersion =
+        selectedVersion != null && availableVersions.contains(selectedVersion)
+        ? selectedVersion
+        : message.version;
+    final selectedIndex = availableVersions.indexOf(effectiveSelectedVersion);
     return MessageRenderModel(
       slotId: message.groupId ?? message.id,
       message: message,
       versions: List<ChatMessage>.unmodifiable(sortedVersions),
+      availableVersions: List<int>.unmodifiable(availableVersions),
       versionCount: versionCount,
       selectedVersionIndex: selectedIndex,
       showContextDivider:
