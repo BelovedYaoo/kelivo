@@ -2527,5 +2527,169 @@
   "customThemeImportInvalid": "Invalid theme JSON",
   "customThemeHexLabel": "Hex",
   "themeSettingsPageCustomPaletteName": "Custom",
-  "themeSettingsPageCustomColorReset": "Reset"
+  "themeSettingsPageCustomColorReset": "Reset",
+  "asrServicesAddAction": "Add",
+  "asrServicesAddTitle": "Add Speech Recognition",
+  "asrServicesAddTooltip": "Add speech recognition service",
+  "asrServicesApiKeyLabel": "API Key",
+  "asrServicesApiKeyRequired": "Enter an API key to use this service.",
+  "asrServicesAutomaticLabel": "Automatic",
+  "asrServicesCancelAction": "Cancel",
+  "asrServicesChooseModelTitle": "Model",
+  "asrServicesCloudGroup": "Cloud",
+  "asrServicesDashScopeSubtitle": "Qwen real-time transcription",
+  "asrServicesDashScopeTitle": "DashScope",
+  "asrServicesDeleteAction": "Delete",
+  "asrServicesDownloadFailed": "Model download failed: {error}",
+  "@asrServicesDownloadFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "asrServicesEditAction": "Edit",
+  "asrServicesEditTitle": "Edit Speech Recognition",
+  "asrServicesEmptySubtitle": "Add one to show the microphone in the chat input.",
+  "asrServicesEmptyTitle": "No speech recognition service",
+  "asrServicesEndpointLabel": "Endpoint",
+  "asrServicesLanguageLabel": "Language",
+  "asrServicesLocalSubtitle": "Runs offline on this device after download",
+  "asrServicesLocalTitle": "Offline Model",
+  "asrServicesMimoSubtitle": "Segmented cloud transcription",
+  "asrServicesMimoTitle": "MiMo",
+  "asrServicesModelDeleteAction": "Remove download",
+  "asrServicesModelDownloadAction": "Download",
+  "asrServicesModelDownloadedLabel": "Downloaded",
+  "asrServicesModelDownloadingLabel": "Downloading…",
+  "asrServicesModelLabel": "Model",
+  "asrServicesModelNotDownloadedLabel": "Not downloaded",
+  "asrServicesModelUseAction": "Use model",
+  "asrServicesNameLabel": "Name",
+  "asrServicesOnDeviceGroup": "On-device",
+  "asrServicesOpenAiSubtitle": "Low-latency streaming transcription",
+  "asrServicesOpenAiTitle": "OpenAI Realtime",
+  "asrServicesResourceIdLabel": "Resource ID",
+  "asrServicesSaveAction": "Save",
+  "asrServicesSectionTitle": "Speech Recognition",
+  "asrServicesStepSubtitle": "Step Audio segmented transcription",
+  "asrServicesStepTitle": "Step",
+  "asrServicesSystemAvailable": "Available",
+  "asrServicesSystemCheckFailed": "System speech recognition is unavailable on this device.",
+  "asrServicesSystemChecking": "Checking…",
+  "asrServicesSystemSubtitle": "Uses the device's built-in recognizer",
+  "asrServicesSystemTitle": "System",
+  "asrServicesVolcengineSubtitle": "Doubao streaming transcription",
+  "asrServicesVolcengineTitle": "Volcengine",
+  "imageSettingsPageCompressTransparentSubtitle": "When enabled, transparent PNG, GIF, and similar formats are compressed; transparent areas become white and animations keep only the first frame.",
+  "imageSettingsPageCompressTransparentTitle": "Compress Transparent & Animated Images",
+  "imageSettingsPageCustomQualityTitle": "Compression Quality",
+  "imageSettingsPageEditSectionTitle": "Editing",
+  "imageSettingsPageFooter": "Compression happens when images are added. Previously saved or sent images are not affected. Compressed images are sent as JPEG files.",
+  "imageSettingsPageQualityBalanced": "Balanced",
+  "imageSettingsPageQualityBalancedSubtitle": "Long edge 1568 px · quality 85",
+  "imageSettingsPageQualityCustom": "Custom",
+  "imageSettingsPageQualityCustomSubtitle": "Choose the compression quality",
+  "imageSettingsPageQualityHigh": "High Quality",
+  "imageSettingsPageQualityHighSubtitle": "Long edge 2048 px · quality 90",
+  "imageSettingsPageQualityOriginal": "Original",
+  "imageSettingsPageQualityOriginalSubtitle": "Don't compress; upload as-is",
+  "imageSettingsPageQualitySaver": "Data Saver",
+  "imageSettingsPageQualitySaverSubtitle": "Long edge 1024 px · quality 70",
+  "imageSettingsPageQualitySectionTitle": "Upload Image Quality",
+  "imageSettingsPageTitle": "Image Processing",
+  "searchApiKeysPageAdd": "Add",
+  "searchApiKeysPageBatchHint": "Paste one or more keys — one per line or comma-separated",
+  "searchApiKeysPageBatchResult": "Added {added}, skipped {skipped} duplicate(s)",
+  "@searchApiKeysPageBatchResult": {
+    "placeholders": {
+      "added": {
+        "type": "String"
+      },
+      "skipped": {
+        "type": "String"
+      }
+    }
+  },
+  "searchApiKeysPageDescription": "Keys rotate in the order listed; the first is the primary key. Usage is not queried to avoid provider rate limiting.",
+  "searchApiKeysPageEmpty": "No keys configured yet.",
+  "searchApiKeysPagePrimaryBadge": "Primary",
+  "searchServiceEditorConfigurationTitle": "Configuration",
+  "searchServiceEditorDeleteConfirm": "Delete",
+  "searchServiceEditorDeleteMessage": "Delete {provider}? This cannot be undone.",
+  "@searchServiceEditorDeleteMessage": {
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
+  },
+  "searchServiceEditorDeleteTitle": "Delete search service?",
+  "searchServiceEditorDeleteTooltip": "Delete search service",
+  "searchServiceEditorMultiKeyCount": "{count} keys",
+  "@searchServiceEditorMultiKeyCount": {
+    "placeholders": {
+      "count": {
+        "type": "String"
+      }
+    }
+  },
+  "searchServiceEditorMultiKeyNone": "Not configured",
+  "searchServiceEditorMultiKeyTitle": "Multi-key rotation",
+  "searchServiceEditorNoConfiguration": "This provider does not require additional configuration.",
+  "searchServiceEditorProviderTypeTitle": "Search provider",
+  "searchServiceEditorResultOpenTooltip": "Open result",
+  "searchServiceEditorTestFailed": "Search failed: {message}",
+  "@searchServiceEditorTestFailed": {
+    "placeholders": {
+      "message": {
+        "type": "String"
+      }
+    }
+  },
+  "searchServiceEditorTestNoResults": "The provider returned no results.",
+  "searchServiceEditorTestQueryHint": "Enter a query",
+  "searchServiceEditorTestRun": "Run test search",
+  "searchServiceEditorTestRunning": "Searching…",
+  "searchServiceEditorTestTitle": "Test search",
+  "searchServiceEditorUsageBalance": "Balance: {balance}",
+  "@searchServiceEditorUsageBalance": {
+    "placeholders": {
+      "balance": {
+        "type": "String"
+      }
+    }
+  },
+  "searchServiceEditorUsageFailed": "Could not query usage: {message}",
+  "@searchServiceEditorUsageFailed": {
+    "placeholders": {
+      "message": {
+        "type": "String"
+      }
+    }
+  },
+  "searchServiceEditorUsageNotQueried": "Usage has not been queried yet.",
+  "searchServiceEditorUsageQuery": "Check usage",
+  "searchServiceEditorUsageQuerying": "Checking…",
+  "searchServiceEditorUsageRemaining": "{remaining} credits remaining",
+  "@searchServiceEditorUsageRemaining": {
+    "placeholders": {
+      "remaining": {
+        "type": "String"
+      }
+    }
+  },
+  "searchServiceEditorUsageTitle": "Account usage",
+  "searchServiceEditorUsageUsed": "{used} of {limit} credits used",
+  "@searchServiceEditorUsageUsed": {
+    "placeholders": {
+      "used": {
+        "type": "String"
+      },
+      "limit": {
+        "type": "String"
+      }
+    }
+  },
+  "ttsServicesSectionTitle": "Text-to-Speech"
 }

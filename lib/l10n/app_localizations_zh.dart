@@ -5730,6 +5730,312 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get themeSettingsPageCustomColorReset => '重置';
+
+  @override
+  String get asrServicesAddAction => '添加';
+
+  @override
+  String get asrServicesAddTitle => '添加语音识别';
+
+  @override
+  String get asrServicesAddTooltip => '添加语音识别服务';
+
+  @override
+  String get asrServicesApiKeyLabel => 'API Key';
+
+  @override
+  String get asrServicesApiKeyRequired => '请输入 API Key 后再使用此服务。';
+
+  @override
+  String get asrServicesAutomaticLabel => '自动';
+
+  @override
+  String get asrServicesCancelAction => '取消';
+
+  @override
+  String get asrServicesChooseModelTitle => '模型';
+
+  @override
+  String get asrServicesCloudGroup => '云端';
+
+  @override
+  String get asrServicesDashScopeSubtitle => 'Qwen 实时转写';
+
+  @override
+  String get asrServicesDashScopeTitle => 'DashScope';
+
+  @override
+  String get asrServicesDeleteAction => '删除';
+
+  @override
+  String asrServicesDownloadFailed(String error) {
+    return '模型下载失败：$error';
+  }
+
+  @override
+  String get asrServicesEditAction => '编辑';
+
+  @override
+  String get asrServicesEditTitle => '编辑语音识别';
+
+  @override
+  String get asrServicesEmptySubtitle => '添加后，聊天输入框才会显示麦克风。';
+
+  @override
+  String get asrServicesEmptyTitle => '尚未添加语音识别服务';
+
+  @override
+  String get asrServicesEndpointLabel => '服务地址';
+
+  @override
+  String get asrServicesLanguageLabel => '语言';
+
+  @override
+  String get asrServicesLocalSubtitle => '下载后在设备上离线运行';
+
+  @override
+  String get asrServicesLocalTitle => '本地模型';
+
+  @override
+  String get asrServicesMimoSubtitle => '分段云端转写';
+
+  @override
+  String get asrServicesMimoTitle => 'MiMo';
+
+  @override
+  String get asrServicesModelDeleteAction => '删除下载';
+
+  @override
+  String get asrServicesModelDownloadAction => '下载';
+
+  @override
+  String get asrServicesModelDownloadedLabel => '已下载';
+
+  @override
+  String get asrServicesModelDownloadingLabel => '正在下载…';
+
+  @override
+  String get asrServicesModelLabel => '模型';
+
+  @override
+  String get asrServicesModelNotDownloadedLabel => '未下载';
+
+  @override
+  String get asrServicesModelUseAction => '使用此模型';
+
+  @override
+  String get asrServicesNameLabel => '名称';
+
+  @override
+  String get asrServicesOnDeviceGroup => '设备端';
+
+  @override
+  String get asrServicesOpenAiSubtitle => '低延迟流式转写';
+
+  @override
+  String get asrServicesOpenAiTitle => 'OpenAI Realtime';
+
+  @override
+  String get asrServicesResourceIdLabel => '资源 ID';
+
+  @override
+  String get asrServicesSaveAction => '保存';
+
+  @override
+  String get asrServicesSectionTitle => '语音识别';
+
+  @override
+  String get asrServicesStepSubtitle => 'Step Audio 分段云端转写';
+
+  @override
+  String get asrServicesStepTitle => 'Step';
+
+  @override
+  String get asrServicesSystemAvailable => '可用';
+
+  @override
+  String get asrServicesSystemCheckFailed => '这台设备没有可用的系统语音识别服务。';
+
+  @override
+  String get asrServicesSystemChecking => '正在检查…';
+
+  @override
+  String get asrServicesSystemSubtitle => '使用设备内置能力';
+
+  @override
+  String get asrServicesSystemTitle => '系统';
+
+  @override
+  String get asrServicesVolcengineSubtitle => '豆包语音流式转写';
+
+  @override
+  String get asrServicesVolcengineTitle => '火山引擎';
+
+  @override
+  String get imageSettingsPageCompressTransparentSubtitle =>
+      '开启后将压缩透明 PNG、GIF 等格式；透明区域填充为白色，动图仅保留第一帧。';
+
+  @override
+  String get imageSettingsPageCompressTransparentTitle => '压缩透明及动态图片';
+
+  @override
+  String get imageSettingsPageCustomQualityTitle => '压缩质量';
+
+  @override
+  String get imageSettingsPageEditSectionTitle => '编辑';
+
+  @override
+  String get imageSettingsPageFooter =>
+      '压缩在添加图片时进行，已保存或已发送的图片不受影响；压缩后图片以 JPEG 格式随消息发送。';
+
+  @override
+  String get imageSettingsPageQualityBalanced => '平衡';
+
+  @override
+  String get imageSettingsPageQualityBalancedSubtitle => '最长边 1568 像素 · 质量 85';
+
+  @override
+  String get imageSettingsPageQualityCustom => '自定义';
+
+  @override
+  String get imageSettingsPageQualityCustomSubtitle => '自选压缩质量';
+
+  @override
+  String get imageSettingsPageQualityHigh => '高质量';
+
+  @override
+  String get imageSettingsPageQualityHighSubtitle => '最长边 2048 像素 · 质量 90';
+
+  @override
+  String get imageSettingsPageQualityOriginal => '原图';
+
+  @override
+  String get imageSettingsPageQualityOriginalSubtitle => '不压缩，原样上传';
+
+  @override
+  String get imageSettingsPageQualitySaver => '节省流量';
+
+  @override
+  String get imageSettingsPageQualitySaverSubtitle => '最长边 1024 像素 · 质量 70';
+
+  @override
+  String get imageSettingsPageQualitySectionTitle => '上传图片质量';
+
+  @override
+  String get imageSettingsPageTitle => '图片处理';
+
+  @override
+  String get searchApiKeysPageAdd => '添加';
+
+  @override
+  String get searchApiKeysPageBatchHint => '可一次粘贴多个 Key：每行一个，或用逗号分隔';
+
+  @override
+  String searchApiKeysPageBatchResult(String added, String skipped) {
+    return '已添加 $added 个，跳过 $skipped 个重复';
+  }
+
+  @override
+  String get searchApiKeysPageDescription =>
+      '列表中的 Key 按顺序轮询使用，第一个为主 Key；不查额度，以防触发服务商风控。';
+
+  @override
+  String get searchApiKeysPageEmpty => '尚未配置任何 Key。';
+
+  @override
+  String get searchApiKeysPagePrimaryBadge => '主';
+
+  @override
+  String get searchServiceEditorConfigurationTitle => '服务配置';
+
+  @override
+  String get searchServiceEditorDeleteConfirm => '删除';
+
+  @override
+  String searchServiceEditorDeleteMessage(String provider) {
+    return '确定删除 $provider 吗？此操作无法撤销。';
+  }
+
+  @override
+  String get searchServiceEditorDeleteTitle => '删除搜索服务？';
+
+  @override
+  String get searchServiceEditorDeleteTooltip => '删除搜索服务';
+
+  @override
+  String searchServiceEditorMultiKeyCount(String count) {
+    return '共 $count 个 Key';
+  }
+
+  @override
+  String get searchServiceEditorMultiKeyNone => '未配置';
+
+  @override
+  String get searchServiceEditorMultiKeyTitle => '多 Key 轮询';
+
+  @override
+  String get searchServiceEditorNoConfiguration => '此提供商无需额外配置。';
+
+  @override
+  String get searchServiceEditorProviderTypeTitle => '搜索提供商';
+
+  @override
+  String get searchServiceEditorResultOpenTooltip => '打开结果';
+
+  @override
+  String searchServiceEditorTestFailed(String message) {
+    return '搜索失败：$message';
+  }
+
+  @override
+  String get searchServiceEditorTestNoResults => '提供商未返回任何结果。';
+
+  @override
+  String get searchServiceEditorTestQueryHint => '输入测试关键词';
+
+  @override
+  String get searchServiceEditorTestRun => '运行测试搜索';
+
+  @override
+  String get searchServiceEditorTestRunning => '搜索中…';
+
+  @override
+  String get searchServiceEditorTestTitle => '测试搜索';
+
+  @override
+  String searchServiceEditorUsageBalance(String balance) {
+    return '余额 $balance';
+  }
+
+  @override
+  String searchServiceEditorUsageFailed(String message) {
+    return '用量查询失败：$message';
+  }
+
+  @override
+  String get searchServiceEditorUsageNotQueried => '尚未查询用量。';
+
+  @override
+  String get searchServiceEditorUsageQuery => '查询用量';
+
+  @override
+  String get searchServiceEditorUsageQuerying => '查询中…';
+
+  @override
+  String searchServiceEditorUsageRemaining(String remaining) {
+    return '剩余 $remaining 额度';
+  }
+
+  @override
+  String get searchServiceEditorUsageTitle => '账户用量';
+
+  @override
+  String searchServiceEditorUsageUsed(String used, String limit) {
+    return '已使用 $used / $limit 额度';
+  }
+
+  @override
+  String get ttsServicesSectionTitle => '文字转语音';
 }
 
 /// The translations for Chinese, using the Han script (`zh_Hans`).
@@ -11458,6 +11764,312 @@ class AppLocalizationsZhHans extends AppLocalizationsZh {
 
   @override
   String get themeSettingsPageCustomColorReset => '重置';
+
+  @override
+  String get asrServicesAddAction => '添加';
+
+  @override
+  String get asrServicesAddTitle => '添加语音识别';
+
+  @override
+  String get asrServicesAddTooltip => '添加语音识别服务';
+
+  @override
+  String get asrServicesApiKeyLabel => 'API Key';
+
+  @override
+  String get asrServicesApiKeyRequired => '请输入 API Key 后再使用此服务。';
+
+  @override
+  String get asrServicesAutomaticLabel => '自动';
+
+  @override
+  String get asrServicesCancelAction => '取消';
+
+  @override
+  String get asrServicesChooseModelTitle => '模型';
+
+  @override
+  String get asrServicesCloudGroup => '云端';
+
+  @override
+  String get asrServicesDashScopeSubtitle => 'Qwen 实时转写';
+
+  @override
+  String get asrServicesDashScopeTitle => 'DashScope';
+
+  @override
+  String get asrServicesDeleteAction => '删除';
+
+  @override
+  String asrServicesDownloadFailed(String error) {
+    return '模型下载失败：$error';
+  }
+
+  @override
+  String get asrServicesEditAction => '编辑';
+
+  @override
+  String get asrServicesEditTitle => '编辑语音识别';
+
+  @override
+  String get asrServicesEmptySubtitle => '添加后，聊天输入框才会显示麦克风。';
+
+  @override
+  String get asrServicesEmptyTitle => '尚未添加语音识别服务';
+
+  @override
+  String get asrServicesEndpointLabel => '服务地址';
+
+  @override
+  String get asrServicesLanguageLabel => '语言';
+
+  @override
+  String get asrServicesLocalSubtitle => '下载后在设备上离线运行';
+
+  @override
+  String get asrServicesLocalTitle => '本地模型';
+
+  @override
+  String get asrServicesMimoSubtitle => '分段云端转写';
+
+  @override
+  String get asrServicesMimoTitle => 'MiMo';
+
+  @override
+  String get asrServicesModelDeleteAction => '删除下载';
+
+  @override
+  String get asrServicesModelDownloadAction => '下载';
+
+  @override
+  String get asrServicesModelDownloadedLabel => '已下载';
+
+  @override
+  String get asrServicesModelDownloadingLabel => '正在下载…';
+
+  @override
+  String get asrServicesModelLabel => '模型';
+
+  @override
+  String get asrServicesModelNotDownloadedLabel => '未下载';
+
+  @override
+  String get asrServicesModelUseAction => '使用此模型';
+
+  @override
+  String get asrServicesNameLabel => '名称';
+
+  @override
+  String get asrServicesOnDeviceGroup => '设备端';
+
+  @override
+  String get asrServicesOpenAiSubtitle => '低延迟流式转写';
+
+  @override
+  String get asrServicesOpenAiTitle => 'OpenAI Realtime';
+
+  @override
+  String get asrServicesResourceIdLabel => '资源 ID';
+
+  @override
+  String get asrServicesSaveAction => '保存';
+
+  @override
+  String get asrServicesSectionTitle => '语音识别';
+
+  @override
+  String get asrServicesStepSubtitle => 'Step Audio 分段云端转写';
+
+  @override
+  String get asrServicesStepTitle => 'Step';
+
+  @override
+  String get asrServicesSystemAvailable => '可用';
+
+  @override
+  String get asrServicesSystemCheckFailed => '这台设备没有可用的系统语音识别服务。';
+
+  @override
+  String get asrServicesSystemChecking => '正在检查…';
+
+  @override
+  String get asrServicesSystemSubtitle => '使用设备内置能力';
+
+  @override
+  String get asrServicesSystemTitle => '系统';
+
+  @override
+  String get asrServicesVolcengineSubtitle => '豆包语音流式转写';
+
+  @override
+  String get asrServicesVolcengineTitle => '火山引擎';
+
+  @override
+  String get imageSettingsPageCompressTransparentSubtitle =>
+      '开启后将压缩透明 PNG、GIF 等格式；透明区域填充为白色，动图仅保留第一帧。';
+
+  @override
+  String get imageSettingsPageCompressTransparentTitle => '压缩透明及动态图片';
+
+  @override
+  String get imageSettingsPageCustomQualityTitle => '压缩质量';
+
+  @override
+  String get imageSettingsPageEditSectionTitle => '编辑';
+
+  @override
+  String get imageSettingsPageFooter =>
+      '压缩在添加图片时进行，已保存或已发送的图片不受影响；压缩后图片以 JPEG 格式随消息发送。';
+
+  @override
+  String get imageSettingsPageQualityBalanced => '平衡';
+
+  @override
+  String get imageSettingsPageQualityBalancedSubtitle => '最长边 1568 像素 · 质量 85';
+
+  @override
+  String get imageSettingsPageQualityCustom => '自定义';
+
+  @override
+  String get imageSettingsPageQualityCustomSubtitle => '自选压缩质量';
+
+  @override
+  String get imageSettingsPageQualityHigh => '高质量';
+
+  @override
+  String get imageSettingsPageQualityHighSubtitle => '最长边 2048 像素 · 质量 90';
+
+  @override
+  String get imageSettingsPageQualityOriginal => '原图';
+
+  @override
+  String get imageSettingsPageQualityOriginalSubtitle => '不压缩，原样上传';
+
+  @override
+  String get imageSettingsPageQualitySaver => '节省流量';
+
+  @override
+  String get imageSettingsPageQualitySaverSubtitle => '最长边 1024 像素 · 质量 70';
+
+  @override
+  String get imageSettingsPageQualitySectionTitle => '上传图片质量';
+
+  @override
+  String get imageSettingsPageTitle => '图片处理';
+
+  @override
+  String get searchApiKeysPageAdd => '添加';
+
+  @override
+  String get searchApiKeysPageBatchHint => '可一次粘贴多个 Key：每行一个，或用逗号分隔';
+
+  @override
+  String searchApiKeysPageBatchResult(String added, String skipped) {
+    return '已添加 $added 个，跳过 $skipped 个重复';
+  }
+
+  @override
+  String get searchApiKeysPageDescription =>
+      '列表中的 Key 按顺序轮询使用，第一个为主 Key；不查额度，以防触发服务商风控。';
+
+  @override
+  String get searchApiKeysPageEmpty => '尚未配置任何 Key。';
+
+  @override
+  String get searchApiKeysPagePrimaryBadge => '主';
+
+  @override
+  String get searchServiceEditorConfigurationTitle => '服务配置';
+
+  @override
+  String get searchServiceEditorDeleteConfirm => '删除';
+
+  @override
+  String searchServiceEditorDeleteMessage(String provider) {
+    return '确定删除 $provider 吗？此操作无法撤销。';
+  }
+
+  @override
+  String get searchServiceEditorDeleteTitle => '删除搜索服务？';
+
+  @override
+  String get searchServiceEditorDeleteTooltip => '删除搜索服务';
+
+  @override
+  String searchServiceEditorMultiKeyCount(String count) {
+    return '共 $count 个 Key';
+  }
+
+  @override
+  String get searchServiceEditorMultiKeyNone => '未配置';
+
+  @override
+  String get searchServiceEditorMultiKeyTitle => '多 Key 轮询';
+
+  @override
+  String get searchServiceEditorNoConfiguration => '此提供商无需额外配置。';
+
+  @override
+  String get searchServiceEditorProviderTypeTitle => '搜索提供商';
+
+  @override
+  String get searchServiceEditorResultOpenTooltip => '打开结果';
+
+  @override
+  String searchServiceEditorTestFailed(String message) {
+    return '搜索失败：$message';
+  }
+
+  @override
+  String get searchServiceEditorTestNoResults => '提供商未返回任何结果。';
+
+  @override
+  String get searchServiceEditorTestQueryHint => '输入测试关键词';
+
+  @override
+  String get searchServiceEditorTestRun => '运行测试搜索';
+
+  @override
+  String get searchServiceEditorTestRunning => '搜索中…';
+
+  @override
+  String get searchServiceEditorTestTitle => '测试搜索';
+
+  @override
+  String searchServiceEditorUsageBalance(String balance) {
+    return '余额 $balance';
+  }
+
+  @override
+  String searchServiceEditorUsageFailed(String message) {
+    return '用量查询失败：$message';
+  }
+
+  @override
+  String get searchServiceEditorUsageNotQueried => '尚未查询用量。';
+
+  @override
+  String get searchServiceEditorUsageQuery => '查询用量';
+
+  @override
+  String get searchServiceEditorUsageQuerying => '查询中…';
+
+  @override
+  String searchServiceEditorUsageRemaining(String remaining) {
+    return '剩余 $remaining 额度';
+  }
+
+  @override
+  String get searchServiceEditorUsageTitle => '账户用量';
+
+  @override
+  String searchServiceEditorUsageUsed(String used, String limit) {
+    return '已使用 $used / $limit 额度';
+  }
+
+  @override
+  String get ttsServicesSectionTitle => '文字转语音';
 }
 
 /// The translations for Chinese, using the Han script (`zh_Hant`).
@@ -17187,4 +17799,310 @@ class AppLocalizationsZhHant extends AppLocalizationsZh {
 
   @override
   String get themeSettingsPageCustomColorReset => '重置';
+
+  @override
+  String get asrServicesAddAction => '新增';
+
+  @override
+  String get asrServicesAddTitle => '新增語音辨識';
+
+  @override
+  String get asrServicesAddTooltip => '新增語音辨識服務';
+
+  @override
+  String get asrServicesApiKeyLabel => 'API Key';
+
+  @override
+  String get asrServicesApiKeyRequired => '請輸入 API Key 後再使用此服務。';
+
+  @override
+  String get asrServicesAutomaticLabel => '自動';
+
+  @override
+  String get asrServicesCancelAction => '取消';
+
+  @override
+  String get asrServicesChooseModelTitle => '模型';
+
+  @override
+  String get asrServicesCloudGroup => '雲端';
+
+  @override
+  String get asrServicesDashScopeSubtitle => 'Qwen 即時轉寫';
+
+  @override
+  String get asrServicesDashScopeTitle => 'DashScope';
+
+  @override
+  String get asrServicesDeleteAction => '刪除';
+
+  @override
+  String asrServicesDownloadFailed(String error) {
+    return '模型下載失敗：$error';
+  }
+
+  @override
+  String get asrServicesEditAction => '編輯';
+
+  @override
+  String get asrServicesEditTitle => '編輯語音辨識';
+
+  @override
+  String get asrServicesEmptySubtitle => '新增後，聊天輸入框才會顯示麥克風。';
+
+  @override
+  String get asrServicesEmptyTitle => '尚未新增語音辨識服務';
+
+  @override
+  String get asrServicesEndpointLabel => '服務位址';
+
+  @override
+  String get asrServicesLanguageLabel => '語言';
+
+  @override
+  String get asrServicesLocalSubtitle => '下載後在裝置上離線執行';
+
+  @override
+  String get asrServicesLocalTitle => '本機模型';
+
+  @override
+  String get asrServicesMimoSubtitle => '分段雲端轉寫';
+
+  @override
+  String get asrServicesMimoTitle => 'MiMo';
+
+  @override
+  String get asrServicesModelDeleteAction => '刪除下載';
+
+  @override
+  String get asrServicesModelDownloadAction => '下載';
+
+  @override
+  String get asrServicesModelDownloadedLabel => '已下載';
+
+  @override
+  String get asrServicesModelDownloadingLabel => '正在下載…';
+
+  @override
+  String get asrServicesModelLabel => '模型';
+
+  @override
+  String get asrServicesModelNotDownloadedLabel => '未下載';
+
+  @override
+  String get asrServicesModelUseAction => '使用此模型';
+
+  @override
+  String get asrServicesNameLabel => '名稱';
+
+  @override
+  String get asrServicesOnDeviceGroup => '裝置端';
+
+  @override
+  String get asrServicesOpenAiSubtitle => '低延遲串流轉寫';
+
+  @override
+  String get asrServicesOpenAiTitle => 'OpenAI Realtime';
+
+  @override
+  String get asrServicesResourceIdLabel => '資源 ID';
+
+  @override
+  String get asrServicesSaveAction => '儲存';
+
+  @override
+  String get asrServicesSectionTitle => '語音辨識';
+
+  @override
+  String get asrServicesStepSubtitle => 'Step Audio 分段雲端轉寫';
+
+  @override
+  String get asrServicesStepTitle => 'Step';
+
+  @override
+  String get asrServicesSystemAvailable => '可用';
+
+  @override
+  String get asrServicesSystemCheckFailed => '這台裝置沒有可用的系統語音辨識服務。';
+
+  @override
+  String get asrServicesSystemChecking => '正在檢查…';
+
+  @override
+  String get asrServicesSystemSubtitle => '使用裝置內建能力';
+
+  @override
+  String get asrServicesSystemTitle => '系統';
+
+  @override
+  String get asrServicesVolcengineSubtitle => '豆包語音串流轉寫';
+
+  @override
+  String get asrServicesVolcengineTitle => '火山引擎';
+
+  @override
+  String get imageSettingsPageCompressTransparentSubtitle =>
+      '開啟後將壓縮透明 PNG、GIF 等格式；透明區域填充為白色，動圖僅保留第一幀。';
+
+  @override
+  String get imageSettingsPageCompressTransparentTitle => '壓縮透明及動態圖片';
+
+  @override
+  String get imageSettingsPageCustomQualityTitle => '壓縮品質';
+
+  @override
+  String get imageSettingsPageEditSectionTitle => '編輯';
+
+  @override
+  String get imageSettingsPageFooter =>
+      '壓縮會在加入圖片時進行，已儲存或已傳送的圖片不受影響；壓縮後圖片會以 JPEG 格式隨訊息傳送。';
+
+  @override
+  String get imageSettingsPageQualityBalanced => '平衡';
+
+  @override
+  String get imageSettingsPageQualityBalancedSubtitle => '最長邊 1568 像素 · 品質 85';
+
+  @override
+  String get imageSettingsPageQualityCustom => '自訂';
+
+  @override
+  String get imageSettingsPageQualityCustomSubtitle => '自選壓縮品質';
+
+  @override
+  String get imageSettingsPageQualityHigh => '高品質';
+
+  @override
+  String get imageSettingsPageQualityHighSubtitle => '最長邊 2048 像素 · 品質 90';
+
+  @override
+  String get imageSettingsPageQualityOriginal => '原圖';
+
+  @override
+  String get imageSettingsPageQualityOriginalSubtitle => '不壓縮，原樣上傳';
+
+  @override
+  String get imageSettingsPageQualitySaver => '節省流量';
+
+  @override
+  String get imageSettingsPageQualitySaverSubtitle => '最長邊 1024 像素 · 品質 70';
+
+  @override
+  String get imageSettingsPageQualitySectionTitle => '上傳圖片品質';
+
+  @override
+  String get imageSettingsPageTitle => '圖片處理';
+
+  @override
+  String get searchApiKeysPageAdd => '新增';
+
+  @override
+  String get searchApiKeysPageBatchHint => '可一次貼上多個 Key：每行一個，或以逗號分隔';
+
+  @override
+  String searchApiKeysPageBatchResult(String added, String skipped) {
+    return '已新增 $added 個，略過 $skipped 個重複';
+  }
+
+  @override
+  String get searchApiKeysPageDescription =>
+      '列表中的 Key 依序輪詢使用，第一個為主 Key；不查額度，以防觸發服務商風控。';
+
+  @override
+  String get searchApiKeysPageEmpty => '尚未設定任何 Key。';
+
+  @override
+  String get searchApiKeysPagePrimaryBadge => '主';
+
+  @override
+  String get searchServiceEditorConfigurationTitle => '服務設定';
+
+  @override
+  String get searchServiceEditorDeleteConfirm => '刪除';
+
+  @override
+  String searchServiceEditorDeleteMessage(String provider) {
+    return '確定刪除 $provider 嗎？此操作無法復原。';
+  }
+
+  @override
+  String get searchServiceEditorDeleteTitle => '刪除搜尋服務？';
+
+  @override
+  String get searchServiceEditorDeleteTooltip => '刪除搜尋服務';
+
+  @override
+  String searchServiceEditorMultiKeyCount(String count) {
+    return '共 $count 個 Key';
+  }
+
+  @override
+  String get searchServiceEditorMultiKeyNone => '未設定';
+
+  @override
+  String get searchServiceEditorMultiKeyTitle => '多 Key 輪詢';
+
+  @override
+  String get searchServiceEditorNoConfiguration => '此提供商無需額外設定。';
+
+  @override
+  String get searchServiceEditorProviderTypeTitle => '搜尋提供商';
+
+  @override
+  String get searchServiceEditorResultOpenTooltip => '開啟結果';
+
+  @override
+  String searchServiceEditorTestFailed(String message) {
+    return '搜尋失敗：$message';
+  }
+
+  @override
+  String get searchServiceEditorTestNoResults => '提供商未回傳任何結果。';
+
+  @override
+  String get searchServiceEditorTestQueryHint => '輸入測試關鍵字';
+
+  @override
+  String get searchServiceEditorTestRun => '執行測試搜尋';
+
+  @override
+  String get searchServiceEditorTestRunning => '搜尋中…';
+
+  @override
+  String get searchServiceEditorTestTitle => '測試搜尋';
+
+  @override
+  String searchServiceEditorUsageBalance(String balance) {
+    return '餘額 $balance';
+  }
+
+  @override
+  String searchServiceEditorUsageFailed(String message) {
+    return '用量查詢失敗：$message';
+  }
+
+  @override
+  String get searchServiceEditorUsageNotQueried => '尚未查詢用量。';
+
+  @override
+  String get searchServiceEditorUsageQuery => '查詢用量';
+
+  @override
+  String get searchServiceEditorUsageQuerying => '查詢中…';
+
+  @override
+  String searchServiceEditorUsageRemaining(String remaining) {
+    return '剩餘 $remaining 額度';
+  }
+
+  @override
+  String get searchServiceEditorUsageTitle => '帳戶用量';
+
+  @override
+  String searchServiceEditorUsageUsed(String used, String limit) {
+    return '已使用 $used / $limit 額度';
+  }
+
+  @override
+  String get ttsServicesSectionTitle => '文字轉語音';
 }

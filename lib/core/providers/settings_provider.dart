@@ -11,6 +11,7 @@ import 'dart:convert';
 import 'package:path/path.dart' as p;
 import '../services/search/search_service.dart';
 import '../services/tts/network_tts.dart';
+import '../services/asr/asr_service_options.dart';
 import '../services/tts/tts_text_selection.dart';
 import '../models/api_keys.dart';
 import '../models/provider_group.dart';
@@ -56,6 +57,8 @@ enum DesktopMessageNavButtonsMode {
 
 // Mobile: message navigation buttons visibility mode
 enum MobileMessageNavButtonsMode { always, scroll, never }
+
+enum ImageUploadQuality { original, high, balanced, saver, custom }
 
 final class GenerationModelSelection {
   const GenerationModelSelection({
@@ -207,6 +210,13 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
   // Legacy single-custom-palette keys (migrated into _customThemesKey on load)
   static const String _legacyCustomSeedColorKey = 'theme_custom_seed_v1';
   static const String _legacyCustomPrimaryOverrideKey = 'theme_custom_primary_v1';
+  static const String _asrServicesKey = 'asr_services_v1';
+  static const String _asrSelectedServiceIdKey = 'asr_selected_service_id_v1';
+  static const String _imageUploadQualityKey = 'image_upload_quality_v1';
+  static const String _imageCompressCustomQualityKey =
+      'image_compress_custom_quality_v1';
+  static const String _imageCompressTransparentEnabledKey =
+      'image_compress_transparent_enabled_v1';
   static const String _thinkingBudgetKey = 'thinking_budget_v1';
   static const String _titleGenerationThinkingEnabledKey =
       'title_generation_thinking_enabled_v1';
@@ -473,6 +483,29 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
   bool _usePureBackground = false;
   bool get usePureBackground => _usePureBackground;
 
+  // ASR is opt-in. An empty list intentionally keeps voice input hidden.
+  List<AsrServiceOptions> _asrServices = const <AsrServiceOptions>[];
+  String? _selectedAsrServiceId;
+  List<AsrServiceOptions> get asrServices => _asrServices;
+  String? get selectedAsrServiceId => _selectedAsrServiceId;
+  AsrServiceOptions? get selectedAsrService {
+    final selectedId = _selectedAsrServiceId;
+    if (selectedId == null) return null;
+    for (final service in _asrServices) {
+      if (service.id == selectedId) return service;
+    }
+    return null;
+  }
+
+  ImageUploadQuality _imageUploadQuality = ImageUploadQuality.balanced;
+  ImageUploadQuality get imageUploadQuality => _imageUploadQuality;
+
+  int _imageCompressCustomQuality = 85;
+  int get imageCompressCustomQuality => _imageCompressCustomQuality;
+
+  bool _imageCompressTransparentEnabled = false;
+  bool get imageCompressTransparentEnabled => _imageCompressTransparentEnabled;
+
   void _loadCustomThemes(SharedPreferences prefs) {
     final raw = prefs.getStringList(_customThemesKey) ?? const <String>[];
     final themes = <CustomTheme>[];
@@ -590,6 +623,77 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
       t = t.copyWith(id: 'ct_${DateTime.now().microsecondsSinceEpoch}');
     }
     return saveCustomTheme(t);
+  }
+
+  Future<void> setAsrServices(List<AsrServiceOptions> value) async {
+    _asrServices = List<AsrServiceOptions>.unmodifiable(value);
+    if (!_asrServices.any((service) => service.id == _selectedAsrServiceId)) {
+      _selectedAsrServiceId =
+          _asrServices.isEmpty ? null : _asrServices.first.id;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      _asrServicesKey,
+      jsonEncode(_asrServices.map((service) => service.toJson()).toList()),
+    );
+    await _persistSelectedAsrServiceId(prefs);
+    notifyListeners();
+  }
+
+  Future<void> setSelectedAsrServiceId(String? id) async {
+    final normalized =
+        id != null && _asrServices.any((service) => service.id == id)
+        ? id
+        : null;
+    if (_selectedAsrServiceId == normalized) return;
+    _selectedAsrServiceId = normalized;
+    await _persistSelectedAsrServiceId(
+      await SharedPreferences.getInstance(),
+    );
+    notifyListeners();
+  }
+
+  Future<void> _persistSelectedAsrServiceId(SharedPreferences prefs) async {
+    final selectedId = _selectedAsrServiceId;
+    if (selectedId == null) {
+      await prefs.remove(_asrSelectedServiceIdKey);
+    } else {
+      await prefs.setString(_asrSelectedServiceIdKey, selectedId);
+    }
+  }
+
+  Future<void> setImageUploadQuality(ImageUploadQuality value) async {
+    if (_imageUploadQuality == value) return;
+    _imageUploadQuality = value;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      _imageUploadQualityKey,
+      switch (value) {
+        ImageUploadQuality.original => 'original',
+        ImageUploadQuality.high => 'high',
+        ImageUploadQuality.balanced => 'balanced',
+        ImageUploadQuality.saver => 'saver',
+        ImageUploadQuality.custom => 'custom',
+      },
+    );
+    notifyListeners();
+  }
+
+  Future<void> setImageCompressCustomQuality(int value) async {
+    final next = value.clamp(10, 100);
+    if (_imageCompressCustomQuality == next) return;
+    _imageCompressCustomQuality = next;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_imageCompressCustomQualityKey, next);
+    notifyListeners();
+  }
+
+  Future<void> setImageCompressTransparentEnabled(bool value) async {
+    if (_imageCompressTransparentEnabled == value) return;
+    _imageCompressTransparentEnabled = value;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_imageCompressTransparentEnabledKey, value);
+    notifyListeners();
   }
 
   // Desktop UI persisted state
@@ -1426,6 +1530,49 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
     _themePaletteId = prefs.getString(_themePaletteKey) ?? 'default';
     _useDynamicColor = prefs.getBool(_useDynamicColorKey) ?? true;
     _loadCustomThemes(prefs);
+    _imageUploadQuality = switch (prefs.getString(_imageUploadQualityKey)) {
+      'original' => ImageUploadQuality.original,
+      'high' => ImageUploadQuality.high,
+      'saver' => ImageUploadQuality.saver,
+      'custom' => ImageUploadQuality.custom,
+      _ => ImageUploadQuality.balanced,
+    };
+    _imageCompressCustomQuality =
+        (prefs.getInt(_imageCompressCustomQualityKey) ?? 85).clamp(10, 100);
+    _imageCompressTransparentEnabled =
+        prefs.getBool(_imageCompressTransparentEnabledKey) ?? false;
+    // ASR has no implicit system default: users explicitly add a provider.
+    final decodedAsrServices = <AsrServiceOptions>[];
+    try {
+      final raw = prefs.getString(_asrServicesKey) ?? '';
+      if (raw.isNotEmpty) {
+        final list = jsonDecode(raw) as List<dynamic>;
+        for (final value in list) {
+          try {
+            decodedAsrServices.add(
+              AsrServiceOptions.fromJson(
+                Map<String, dynamic>.from(value as Map),
+              ),
+            );
+          } catch (_) {
+            // Preserve other valid services when one legacy row is malformed.
+          }
+        }
+      }
+    } catch (_) {}
+    _asrServices = List<AsrServiceOptions>.unmodifiable(decodedAsrServices);
+    final storedAsrId = prefs.getString(_asrSelectedServiceIdKey);
+    _selectedAsrServiceId =
+        decodedAsrServices.any((service) => service.id == storedAsrId)
+        ? storedAsrId
+        : (decodedAsrServices.isEmpty ? null : decodedAsrServices.first.id);
+    if (_selectedAsrServiceId != storedAsrId) {
+      if (_selectedAsrServiceId == null) {
+        await prefs.remove(_asrSelectedServiceIdKey);
+      } else {
+        await prefs.setString(_asrSelectedServiceIdKey, _selectedAsrServiceId!);
+      }
+    }
     var providerConfigsLoaded = false;
     final cfgStr = useConfigVault ? null : prefs.getString(_providerConfigsKey);
     if (cfgStr != null && cfgStr.isNotEmpty) {

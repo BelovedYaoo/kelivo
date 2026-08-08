@@ -5981,4 +5981,325 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get themeSettingsPageCustomColorReset => 'Reset';
+
+  @override
+  String get asrServicesAddAction => 'Add';
+
+  @override
+  String get asrServicesAddTitle => 'Add Speech Recognition';
+
+  @override
+  String get asrServicesAddTooltip => 'Add speech recognition service';
+
+  @override
+  String get asrServicesApiKeyLabel => 'API Key';
+
+  @override
+  String get asrServicesApiKeyRequired =>
+      'Enter an API key to use this service.';
+
+  @override
+  String get asrServicesAutomaticLabel => 'Automatic';
+
+  @override
+  String get asrServicesCancelAction => 'Cancel';
+
+  @override
+  String get asrServicesChooseModelTitle => 'Model';
+
+  @override
+  String get asrServicesCloudGroup => 'Cloud';
+
+  @override
+  String get asrServicesDashScopeSubtitle => 'Qwen real-time transcription';
+
+  @override
+  String get asrServicesDashScopeTitle => 'DashScope';
+
+  @override
+  String get asrServicesDeleteAction => 'Delete';
+
+  @override
+  String asrServicesDownloadFailed(String error) {
+    return 'Model download failed: $error';
+  }
+
+  @override
+  String get asrServicesEditAction => 'Edit';
+
+  @override
+  String get asrServicesEditTitle => 'Edit Speech Recognition';
+
+  @override
+  String get asrServicesEmptySubtitle =>
+      'Add one to show the microphone in the chat input.';
+
+  @override
+  String get asrServicesEmptyTitle => 'No speech recognition service';
+
+  @override
+  String get asrServicesEndpointLabel => 'Endpoint';
+
+  @override
+  String get asrServicesLanguageLabel => 'Language';
+
+  @override
+  String get asrServicesLocalSubtitle =>
+      'Runs offline on this device after download';
+
+  @override
+  String get asrServicesLocalTitle => 'Offline Model';
+
+  @override
+  String get asrServicesMimoSubtitle => 'Segmented cloud transcription';
+
+  @override
+  String get asrServicesMimoTitle => 'MiMo';
+
+  @override
+  String get asrServicesModelDeleteAction => 'Remove download';
+
+  @override
+  String get asrServicesModelDownloadAction => 'Download';
+
+  @override
+  String get asrServicesModelDownloadedLabel => 'Downloaded';
+
+  @override
+  String get asrServicesModelDownloadingLabel => 'Downloading…';
+
+  @override
+  String get asrServicesModelLabel => 'Model';
+
+  @override
+  String get asrServicesModelNotDownloadedLabel => 'Not downloaded';
+
+  @override
+  String get asrServicesModelUseAction => 'Use model';
+
+  @override
+  String get asrServicesNameLabel => 'Name';
+
+  @override
+  String get asrServicesOnDeviceGroup => 'On-device';
+
+  @override
+  String get asrServicesOpenAiSubtitle => 'Low-latency streaming transcription';
+
+  @override
+  String get asrServicesOpenAiTitle => 'OpenAI Realtime';
+
+  @override
+  String get asrServicesResourceIdLabel => 'Resource ID';
+
+  @override
+  String get asrServicesSaveAction => 'Save';
+
+  @override
+  String get asrServicesSectionTitle => 'Speech Recognition';
+
+  @override
+  String get asrServicesStepSubtitle => 'Step Audio segmented transcription';
+
+  @override
+  String get asrServicesStepTitle => 'Step';
+
+  @override
+  String get asrServicesSystemAvailable => 'Available';
+
+  @override
+  String get asrServicesSystemCheckFailed =>
+      'System speech recognition is unavailable on this device.';
+
+  @override
+  String get asrServicesSystemChecking => 'Checking…';
+
+  @override
+  String get asrServicesSystemSubtitle =>
+      'Uses the device\'s built-in recognizer';
+
+  @override
+  String get asrServicesSystemTitle => 'System';
+
+  @override
+  String get asrServicesVolcengineSubtitle => 'Doubao streaming transcription';
+
+  @override
+  String get asrServicesVolcengineTitle => 'Volcengine';
+
+  @override
+  String get imageSettingsPageCompressTransparentSubtitle =>
+      'When enabled, transparent PNG, GIF, and similar formats are compressed; transparent areas become white and animations keep only the first frame.';
+
+  @override
+  String get imageSettingsPageCompressTransparentTitle =>
+      'Compress Transparent & Animated Images';
+
+  @override
+  String get imageSettingsPageCustomQualityTitle => 'Compression Quality';
+
+  @override
+  String get imageSettingsPageEditSectionTitle => 'Editing';
+
+  @override
+  String get imageSettingsPageFooter =>
+      'Compression happens when images are added. Previously saved or sent images are not affected. Compressed images are sent as JPEG files.';
+
+  @override
+  String get imageSettingsPageQualityBalanced => 'Balanced';
+
+  @override
+  String get imageSettingsPageQualityBalancedSubtitle =>
+      'Long edge 1568 px · quality 85';
+
+  @override
+  String get imageSettingsPageQualityCustom => 'Custom';
+
+  @override
+  String get imageSettingsPageQualityCustomSubtitle =>
+      'Choose the compression quality';
+
+  @override
+  String get imageSettingsPageQualityHigh => 'High Quality';
+
+  @override
+  String get imageSettingsPageQualityHighSubtitle =>
+      'Long edge 2048 px · quality 90';
+
+  @override
+  String get imageSettingsPageQualityOriginal => 'Original';
+
+  @override
+  String get imageSettingsPageQualityOriginalSubtitle =>
+      'Don\'t compress; upload as-is';
+
+  @override
+  String get imageSettingsPageQualitySaver => 'Data Saver';
+
+  @override
+  String get imageSettingsPageQualitySaverSubtitle =>
+      'Long edge 1024 px · quality 70';
+
+  @override
+  String get imageSettingsPageQualitySectionTitle => 'Upload Image Quality';
+
+  @override
+  String get imageSettingsPageTitle => 'Image Processing';
+
+  @override
+  String get searchApiKeysPageAdd => 'Add';
+
+  @override
+  String get searchApiKeysPageBatchHint =>
+      'Paste one or more keys — one per line or comma-separated';
+
+  @override
+  String searchApiKeysPageBatchResult(String added, String skipped) {
+    return 'Added $added, skipped $skipped duplicate(s)';
+  }
+
+  @override
+  String get searchApiKeysPageDescription =>
+      'Keys rotate in the order listed; the first is the primary key. Usage is not queried to avoid provider rate limiting.';
+
+  @override
+  String get searchApiKeysPageEmpty => 'No keys configured yet.';
+
+  @override
+  String get searchApiKeysPagePrimaryBadge => 'Primary';
+
+  @override
+  String get searchServiceEditorConfigurationTitle => 'Configuration';
+
+  @override
+  String get searchServiceEditorDeleteConfirm => 'Delete';
+
+  @override
+  String searchServiceEditorDeleteMessage(String provider) {
+    return 'Delete $provider? This cannot be undone.';
+  }
+
+  @override
+  String get searchServiceEditorDeleteTitle => 'Delete search service?';
+
+  @override
+  String get searchServiceEditorDeleteTooltip => 'Delete search service';
+
+  @override
+  String searchServiceEditorMultiKeyCount(String count) {
+    return '$count keys';
+  }
+
+  @override
+  String get searchServiceEditorMultiKeyNone => 'Not configured';
+
+  @override
+  String get searchServiceEditorMultiKeyTitle => 'Multi-key rotation';
+
+  @override
+  String get searchServiceEditorNoConfiguration =>
+      'This provider does not require additional configuration.';
+
+  @override
+  String get searchServiceEditorProviderTypeTitle => 'Search provider';
+
+  @override
+  String get searchServiceEditorResultOpenTooltip => 'Open result';
+
+  @override
+  String searchServiceEditorTestFailed(String message) {
+    return 'Search failed: $message';
+  }
+
+  @override
+  String get searchServiceEditorTestNoResults =>
+      'The provider returned no results.';
+
+  @override
+  String get searchServiceEditorTestQueryHint => 'Enter a query';
+
+  @override
+  String get searchServiceEditorTestRun => 'Run test search';
+
+  @override
+  String get searchServiceEditorTestRunning => 'Searching…';
+
+  @override
+  String get searchServiceEditorTestTitle => 'Test search';
+
+  @override
+  String searchServiceEditorUsageBalance(String balance) {
+    return 'Balance: $balance';
+  }
+
+  @override
+  String searchServiceEditorUsageFailed(String message) {
+    return 'Could not query usage: $message';
+  }
+
+  @override
+  String get searchServiceEditorUsageNotQueried =>
+      'Usage has not been queried yet.';
+
+  @override
+  String get searchServiceEditorUsageQuery => 'Check usage';
+
+  @override
+  String get searchServiceEditorUsageQuerying => 'Checking…';
+
+  @override
+  String searchServiceEditorUsageRemaining(String remaining) {
+    return '$remaining credits remaining';
+  }
+
+  @override
+  String get searchServiceEditorUsageTitle => 'Account usage';
+
+  @override
+  String searchServiceEditorUsageUsed(String used, String limit) {
+    return '$used of $limit credits used';
+  }
+
+  @override
+  String get ttsServicesSectionTitle => 'Text-to-Speech';
 }

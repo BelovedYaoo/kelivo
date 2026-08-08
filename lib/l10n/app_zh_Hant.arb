@@ -2527,5 +2527,145 @@
   "customThemeImportInvalid": "無效的主題 JSON",
   "customThemeHexLabel": "十六進制",
   "themeSettingsPageCustomPaletteName": "自定義",
-  "themeSettingsPageCustomColorReset": "重置"
+  "themeSettingsPageCustomColorReset": "重置",
+  "asrServicesAddAction": "新增",
+  "asrServicesAddTitle": "新增語音辨識",
+  "asrServicesAddTooltip": "新增語音辨識服務",
+  "asrServicesApiKeyLabel": "API Key",
+  "asrServicesApiKeyRequired": "請輸入 API Key 後再使用此服務。",
+  "asrServicesAutomaticLabel": "自動",
+  "asrServicesCancelAction": "取消",
+  "asrServicesChooseModelTitle": "模型",
+  "asrServicesCloudGroup": "雲端",
+  "asrServicesDashScopeSubtitle": "Qwen 即時轉寫",
+  "asrServicesDashScopeTitle": "DashScope",
+  "asrServicesDeleteAction": "刪除",
+  "asrServicesDownloadFailed": "模型下載失敗：{error}",
+  "asrServicesEditAction": "編輯",
+  "asrServicesEditTitle": "編輯語音辨識",
+  "asrServicesEmptySubtitle": "新增後，聊天輸入框才會顯示麥克風。",
+  "asrServicesEmptyTitle": "尚未新增語音辨識服務",
+  "asrServicesEndpointLabel": "服務位址",
+  "asrServicesLanguageLabel": "語言",
+  "asrServicesLocalSubtitle": "下載後在裝置上離線執行",
+  "asrServicesLocalTitle": "本機模型",
+  "asrServicesMimoSubtitle": "分段雲端轉寫",
+  "asrServicesMimoTitle": "MiMo",
+  "asrServicesModelDeleteAction": "刪除下載",
+  "asrServicesModelDownloadAction": "下載",
+  "asrServicesModelDownloadedLabel": "已下載",
+  "asrServicesModelDownloadingLabel": "正在下載…",
+  "asrServicesModelLabel": "模型",
+  "asrServicesModelNotDownloadedLabel": "未下載",
+  "asrServicesModelUseAction": "使用此模型",
+  "asrServicesNameLabel": "名稱",
+  "asrServicesOnDeviceGroup": "裝置端",
+  "asrServicesOpenAiSubtitle": "低延遲串流轉寫",
+  "asrServicesOpenAiTitle": "OpenAI Realtime",
+  "asrServicesResourceIdLabel": "資源 ID",
+  "asrServicesSaveAction": "儲存",
+  "asrServicesSectionTitle": "語音辨識",
+  "asrServicesStepSubtitle": "Step Audio 分段雲端轉寫",
+  "asrServicesStepTitle": "Step",
+  "asrServicesSystemAvailable": "可用",
+  "asrServicesSystemCheckFailed": "這台裝置沒有可用的系統語音辨識服務。",
+  "asrServicesSystemChecking": "正在檢查…",
+  "asrServicesSystemSubtitle": "使用裝置內建能力",
+  "asrServicesSystemTitle": "系統",
+  "asrServicesVolcengineSubtitle": "豆包語音串流轉寫",
+  "asrServicesVolcengineTitle": "火山引擎",
+  "imageSettingsPageCompressTransparentSubtitle": "開啟後將壓縮透明 PNG、GIF 等格式；透明區域填充為白色，動圖僅保留第一幀。",
+  "imageSettingsPageCompressTransparentTitle": "壓縮透明及動態圖片",
+  "imageSettingsPageCustomQualityTitle": "壓縮品質",
+  "imageSettingsPageEditSectionTitle": "編輯",
+  "imageSettingsPageFooter": "壓縮會在加入圖片時進行，已儲存或已傳送的圖片不受影響；壓縮後圖片會以 JPEG 格式隨訊息傳送。",
+  "imageSettingsPageQualityBalanced": "平衡",
+  "imageSettingsPageQualityBalancedSubtitle": "最長邊 1568 像素 · 品質 85",
+  "imageSettingsPageQualityCustom": "自訂",
+  "imageSettingsPageQualityCustomSubtitle": "自選壓縮品質",
+  "imageSettingsPageQualityHigh": "高品質",
+  "imageSettingsPageQualityHighSubtitle": "最長邊 2048 像素 · 品質 90",
+  "imageSettingsPageQualityOriginal": "原圖",
+  "imageSettingsPageQualityOriginalSubtitle": "不壓縮，原樣上傳",
+  "imageSettingsPageQualitySaver": "節省流量",
+  "imageSettingsPageQualitySaverSubtitle": "最長邊 1024 像素 · 品質 70",
+  "imageSettingsPageQualitySectionTitle": "上傳圖片品質",
+  "imageSettingsPageTitle": "圖片處理",
+  "searchApiKeysPageAdd": "新增",
+  "searchApiKeysPageBatchHint": "可一次貼上多個 Key：每行一個，或以逗號分隔",
+  "searchApiKeysPageBatchResult": "已新增 {added} 個，略過 {skipped} 個重複",
+  "searchApiKeysPageDescription": "列表中的 Key 依序輪詢使用，第一個為主 Key；不查額度，以防觸發服務商風控。",
+  "searchApiKeysPageEmpty": "尚未設定任何 Key。",
+  "searchApiKeysPagePrimaryBadge": "主",
+  "searchServiceEditorConfigurationTitle": "服務設定",
+  "searchServiceEditorDeleteConfirm": "刪除",
+  "searchServiceEditorDeleteMessage": "確定刪除 {provider} 嗎？此操作無法復原。",
+  "@searchServiceEditorDeleteMessage": {
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
+  },
+  "searchServiceEditorDeleteTitle": "刪除搜尋服務？",
+  "searchServiceEditorDeleteTooltip": "刪除搜尋服務",
+  "searchServiceEditorMultiKeyCount": "共 {count} 個 Key",
+  "searchServiceEditorMultiKeyNone": "未設定",
+  "searchServiceEditorMultiKeyTitle": "多 Key 輪詢",
+  "searchServiceEditorNoConfiguration": "此提供商無需額外設定。",
+  "searchServiceEditorProviderTypeTitle": "搜尋提供商",
+  "searchServiceEditorResultOpenTooltip": "開啟結果",
+  "searchServiceEditorTestFailed": "搜尋失敗：{message}",
+  "@searchServiceEditorTestFailed": {
+    "placeholders": {
+      "message": {
+        "type": "String"
+      }
+    }
+  },
+  "searchServiceEditorTestNoResults": "提供商未回傳任何結果。",
+  "searchServiceEditorTestQueryHint": "輸入測試關鍵字",
+  "searchServiceEditorTestRun": "執行測試搜尋",
+  "searchServiceEditorTestRunning": "搜尋中…",
+  "searchServiceEditorTestTitle": "測試搜尋",
+  "searchServiceEditorUsageBalance": "餘額 {balance}",
+  "@searchServiceEditorUsageBalance": {
+    "placeholders": {
+      "balance": {
+        "type": "String"
+      }
+    }
+  },
+  "searchServiceEditorUsageFailed": "用量查詢失敗：{message}",
+  "@searchServiceEditorUsageFailed": {
+    "placeholders": {
+      "message": {
+        "type": "String"
+      }
+    }
+  },
+  "searchServiceEditorUsageNotQueried": "尚未查詢用量。",
+  "searchServiceEditorUsageQuery": "查詢用量",
+  "searchServiceEditorUsageQuerying": "查詢中…",
+  "searchServiceEditorUsageRemaining": "剩餘 {remaining} 額度",
+  "@searchServiceEditorUsageRemaining": {
+    "placeholders": {
+      "remaining": {
+        "type": "String"
+      }
+    }
+  },
+  "searchServiceEditorUsageTitle": "帳戶用量",
+  "searchServiceEditorUsageUsed": "已使用 {used} / {limit} 額度",
+  "@searchServiceEditorUsageUsed": {
+    "placeholders": {
+      "used": {
+        "type": "String"
+      },
+      "limit": {
+        "type": "String"
+      }
+    }
+  },
+  "ttsServicesSectionTitle": "文字轉語音"
 }

@@ -10957,6 +10957,576 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Reset'**
   String get themeSettingsPageCustomColorReset;
+
+  /// No description provided for @asrServicesAddAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Add'**
+  String get asrServicesAddAction;
+
+  /// No description provided for @asrServicesAddTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Add Speech Recognition'**
+  String get asrServicesAddTitle;
+
+  /// No description provided for @asrServicesAddTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Add speech recognition service'**
+  String get asrServicesAddTooltip;
+
+  /// No description provided for @asrServicesApiKeyLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'API Key'**
+  String get asrServicesApiKeyLabel;
+
+  /// No description provided for @asrServicesApiKeyRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter an API key to use this service.'**
+  String get asrServicesApiKeyRequired;
+
+  /// No description provided for @asrServicesAutomaticLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Automatic'**
+  String get asrServicesAutomaticLabel;
+
+  /// No description provided for @asrServicesCancelAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel'**
+  String get asrServicesCancelAction;
+
+  /// No description provided for @asrServicesChooseModelTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Model'**
+  String get asrServicesChooseModelTitle;
+
+  /// No description provided for @asrServicesCloudGroup.
+  ///
+  /// In en, this message translates to:
+  /// **'Cloud'**
+  String get asrServicesCloudGroup;
+
+  /// No description provided for @asrServicesDashScopeSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Qwen real-time transcription'**
+  String get asrServicesDashScopeSubtitle;
+
+  /// No description provided for @asrServicesDashScopeTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'DashScope'**
+  String get asrServicesDashScopeTitle;
+
+  /// No description provided for @asrServicesDeleteAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete'**
+  String get asrServicesDeleteAction;
+
+  /// No description provided for @asrServicesDownloadFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Model download failed: {error}'**
+  String asrServicesDownloadFailed(String error);
+
+  /// No description provided for @asrServicesEditAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit'**
+  String get asrServicesEditAction;
+
+  /// No description provided for @asrServicesEditTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit Speech Recognition'**
+  String get asrServicesEditTitle;
+
+  /// No description provided for @asrServicesEmptySubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Add one to show the microphone in the chat input.'**
+  String get asrServicesEmptySubtitle;
+
+  /// No description provided for @asrServicesEmptyTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'No speech recognition service'**
+  String get asrServicesEmptyTitle;
+
+  /// No description provided for @asrServicesEndpointLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Endpoint'**
+  String get asrServicesEndpointLabel;
+
+  /// No description provided for @asrServicesLanguageLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Language'**
+  String get asrServicesLanguageLabel;
+
+  /// No description provided for @asrServicesLocalSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Runs offline on this device after download'**
+  String get asrServicesLocalSubtitle;
+
+  /// No description provided for @asrServicesLocalTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Offline Model'**
+  String get asrServicesLocalTitle;
+
+  /// No description provided for @asrServicesMimoSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Segmented cloud transcription'**
+  String get asrServicesMimoSubtitle;
+
+  /// No description provided for @asrServicesMimoTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'MiMo'**
+  String get asrServicesMimoTitle;
+
+  /// No description provided for @asrServicesModelDeleteAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove download'**
+  String get asrServicesModelDeleteAction;
+
+  /// No description provided for @asrServicesModelDownloadAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Download'**
+  String get asrServicesModelDownloadAction;
+
+  /// No description provided for @asrServicesModelDownloadedLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Downloaded'**
+  String get asrServicesModelDownloadedLabel;
+
+  /// No description provided for @asrServicesModelDownloadingLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Downloading…'**
+  String get asrServicesModelDownloadingLabel;
+
+  /// No description provided for @asrServicesModelLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Model'**
+  String get asrServicesModelLabel;
+
+  /// No description provided for @asrServicesModelNotDownloadedLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Not downloaded'**
+  String get asrServicesModelNotDownloadedLabel;
+
+  /// No description provided for @asrServicesModelUseAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Use model'**
+  String get asrServicesModelUseAction;
+
+  /// No description provided for @asrServicesNameLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Name'**
+  String get asrServicesNameLabel;
+
+  /// No description provided for @asrServicesOnDeviceGroup.
+  ///
+  /// In en, this message translates to:
+  /// **'On-device'**
+  String get asrServicesOnDeviceGroup;
+
+  /// No description provided for @asrServicesOpenAiSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Low-latency streaming transcription'**
+  String get asrServicesOpenAiSubtitle;
+
+  /// No description provided for @asrServicesOpenAiTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'OpenAI Realtime'**
+  String get asrServicesOpenAiTitle;
+
+  /// No description provided for @asrServicesResourceIdLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Resource ID'**
+  String get asrServicesResourceIdLabel;
+
+  /// No description provided for @asrServicesSaveAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Save'**
+  String get asrServicesSaveAction;
+
+  /// No description provided for @asrServicesSectionTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Speech Recognition'**
+  String get asrServicesSectionTitle;
+
+  /// No description provided for @asrServicesStepSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Step Audio segmented transcription'**
+  String get asrServicesStepSubtitle;
+
+  /// No description provided for @asrServicesStepTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Step'**
+  String get asrServicesStepTitle;
+
+  /// No description provided for @asrServicesSystemAvailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Available'**
+  String get asrServicesSystemAvailable;
+
+  /// No description provided for @asrServicesSystemCheckFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'System speech recognition is unavailable on this device.'**
+  String get asrServicesSystemCheckFailed;
+
+  /// No description provided for @asrServicesSystemChecking.
+  ///
+  /// In en, this message translates to:
+  /// **'Checking…'**
+  String get asrServicesSystemChecking;
+
+  /// No description provided for @asrServicesSystemSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Uses the device\'s built-in recognizer'**
+  String get asrServicesSystemSubtitle;
+
+  /// No description provided for @asrServicesSystemTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'System'**
+  String get asrServicesSystemTitle;
+
+  /// No description provided for @asrServicesVolcengineSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Doubao streaming transcription'**
+  String get asrServicesVolcengineSubtitle;
+
+  /// No description provided for @asrServicesVolcengineTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Volcengine'**
+  String get asrServicesVolcengineTitle;
+
+  /// No description provided for @imageSettingsPageCompressTransparentSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'When enabled, transparent PNG, GIF, and similar formats are compressed; transparent areas become white and animations keep only the first frame.'**
+  String get imageSettingsPageCompressTransparentSubtitle;
+
+  /// No description provided for @imageSettingsPageCompressTransparentTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Compress Transparent & Animated Images'**
+  String get imageSettingsPageCompressTransparentTitle;
+
+  /// No description provided for @imageSettingsPageCustomQualityTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Compression Quality'**
+  String get imageSettingsPageCustomQualityTitle;
+
+  /// No description provided for @imageSettingsPageEditSectionTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Editing'**
+  String get imageSettingsPageEditSectionTitle;
+
+  /// No description provided for @imageSettingsPageFooter.
+  ///
+  /// In en, this message translates to:
+  /// **'Compression happens when images are added. Previously saved or sent images are not affected. Compressed images are sent as JPEG files.'**
+  String get imageSettingsPageFooter;
+
+  /// No description provided for @imageSettingsPageQualityBalanced.
+  ///
+  /// In en, this message translates to:
+  /// **'Balanced'**
+  String get imageSettingsPageQualityBalanced;
+
+  /// No description provided for @imageSettingsPageQualityBalancedSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Long edge 1568 px · quality 85'**
+  String get imageSettingsPageQualityBalancedSubtitle;
+
+  /// No description provided for @imageSettingsPageQualityCustom.
+  ///
+  /// In en, this message translates to:
+  /// **'Custom'**
+  String get imageSettingsPageQualityCustom;
+
+  /// No description provided for @imageSettingsPageQualityCustomSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose the compression quality'**
+  String get imageSettingsPageQualityCustomSubtitle;
+
+  /// No description provided for @imageSettingsPageQualityHigh.
+  ///
+  /// In en, this message translates to:
+  /// **'High Quality'**
+  String get imageSettingsPageQualityHigh;
+
+  /// No description provided for @imageSettingsPageQualityHighSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Long edge 2048 px · quality 90'**
+  String get imageSettingsPageQualityHighSubtitle;
+
+  /// No description provided for @imageSettingsPageQualityOriginal.
+  ///
+  /// In en, this message translates to:
+  /// **'Original'**
+  String get imageSettingsPageQualityOriginal;
+
+  /// No description provided for @imageSettingsPageQualityOriginalSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Don\'t compress; upload as-is'**
+  String get imageSettingsPageQualityOriginalSubtitle;
+
+  /// No description provided for @imageSettingsPageQualitySaver.
+  ///
+  /// In en, this message translates to:
+  /// **'Data Saver'**
+  String get imageSettingsPageQualitySaver;
+
+  /// No description provided for @imageSettingsPageQualitySaverSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Long edge 1024 px · quality 70'**
+  String get imageSettingsPageQualitySaverSubtitle;
+
+  /// No description provided for @imageSettingsPageQualitySectionTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Upload Image Quality'**
+  String get imageSettingsPageQualitySectionTitle;
+
+  /// No description provided for @imageSettingsPageTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Image Processing'**
+  String get imageSettingsPageTitle;
+
+  /// No description provided for @searchApiKeysPageAdd.
+  ///
+  /// In en, this message translates to:
+  /// **'Add'**
+  String get searchApiKeysPageAdd;
+
+  /// No description provided for @searchApiKeysPageBatchHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Paste one or more keys — one per line or comma-separated'**
+  String get searchApiKeysPageBatchHint;
+
+  /// No description provided for @searchApiKeysPageBatchResult.
+  ///
+  /// In en, this message translates to:
+  /// **'Added {added}, skipped {skipped} duplicate(s)'**
+  String searchApiKeysPageBatchResult(String added, String skipped);
+
+  /// No description provided for @searchApiKeysPageDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Keys rotate in the order listed; the first is the primary key. Usage is not queried to avoid provider rate limiting.'**
+  String get searchApiKeysPageDescription;
+
+  /// No description provided for @searchApiKeysPageEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No keys configured yet.'**
+  String get searchApiKeysPageEmpty;
+
+  /// No description provided for @searchApiKeysPagePrimaryBadge.
+  ///
+  /// In en, this message translates to:
+  /// **'Primary'**
+  String get searchApiKeysPagePrimaryBadge;
+
+  /// No description provided for @searchServiceEditorConfigurationTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Configuration'**
+  String get searchServiceEditorConfigurationTitle;
+
+  /// No description provided for @searchServiceEditorDeleteConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete'**
+  String get searchServiceEditorDeleteConfirm;
+
+  /// No description provided for @searchServiceEditorDeleteMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete {provider}? This cannot be undone.'**
+  String searchServiceEditorDeleteMessage(String provider);
+
+  /// No description provided for @searchServiceEditorDeleteTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete search service?'**
+  String get searchServiceEditorDeleteTitle;
+
+  /// No description provided for @searchServiceEditorDeleteTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete search service'**
+  String get searchServiceEditorDeleteTooltip;
+
+  /// No description provided for @searchServiceEditorMultiKeyCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} keys'**
+  String searchServiceEditorMultiKeyCount(String count);
+
+  /// No description provided for @searchServiceEditorMultiKeyNone.
+  ///
+  /// In en, this message translates to:
+  /// **'Not configured'**
+  String get searchServiceEditorMultiKeyNone;
+
+  /// No description provided for @searchServiceEditorMultiKeyTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Multi-key rotation'**
+  String get searchServiceEditorMultiKeyTitle;
+
+  /// No description provided for @searchServiceEditorNoConfiguration.
+  ///
+  /// In en, this message translates to:
+  /// **'This provider does not require additional configuration.'**
+  String get searchServiceEditorNoConfiguration;
+
+  /// No description provided for @searchServiceEditorProviderTypeTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Search provider'**
+  String get searchServiceEditorProviderTypeTitle;
+
+  /// No description provided for @searchServiceEditorResultOpenTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Open result'**
+  String get searchServiceEditorResultOpenTooltip;
+
+  /// No description provided for @searchServiceEditorTestFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Search failed: {message}'**
+  String searchServiceEditorTestFailed(String message);
+
+  /// No description provided for @searchServiceEditorTestNoResults.
+  ///
+  /// In en, this message translates to:
+  /// **'The provider returned no results.'**
+  String get searchServiceEditorTestNoResults;
+
+  /// No description provided for @searchServiceEditorTestQueryHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter a query'**
+  String get searchServiceEditorTestQueryHint;
+
+  /// No description provided for @searchServiceEditorTestRun.
+  ///
+  /// In en, this message translates to:
+  /// **'Run test search'**
+  String get searchServiceEditorTestRun;
+
+  /// No description provided for @searchServiceEditorTestRunning.
+  ///
+  /// In en, this message translates to:
+  /// **'Searching…'**
+  String get searchServiceEditorTestRunning;
+
+  /// No description provided for @searchServiceEditorTestTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Test search'**
+  String get searchServiceEditorTestTitle;
+
+  /// No description provided for @searchServiceEditorUsageBalance.
+  ///
+  /// In en, this message translates to:
+  /// **'Balance: {balance}'**
+  String searchServiceEditorUsageBalance(String balance);
+
+  /// No description provided for @searchServiceEditorUsageFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not query usage: {message}'**
+  String searchServiceEditorUsageFailed(String message);
+
+  /// No description provided for @searchServiceEditorUsageNotQueried.
+  ///
+  /// In en, this message translates to:
+  /// **'Usage has not been queried yet.'**
+  String get searchServiceEditorUsageNotQueried;
+
+  /// No description provided for @searchServiceEditorUsageQuery.
+  ///
+  /// In en, this message translates to:
+  /// **'Check usage'**
+  String get searchServiceEditorUsageQuery;
+
+  /// No description provided for @searchServiceEditorUsageQuerying.
+  ///
+  /// In en, this message translates to:
+  /// **'Checking…'**
+  String get searchServiceEditorUsageQuerying;
+
+  /// No description provided for @searchServiceEditorUsageRemaining.
+  ///
+  /// In en, this message translates to:
+  /// **'{remaining} credits remaining'**
+  String searchServiceEditorUsageRemaining(String remaining);
+
+  /// No description provided for @searchServiceEditorUsageTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Account usage'**
+  String get searchServiceEditorUsageTitle;
+
+  /// No description provided for @searchServiceEditorUsageUsed.
+  ///
+  /// In en, this message translates to:
+  /// **'{used} of {limit} credits used'**
+  String searchServiceEditorUsageUsed(String used, String limit);
+
+  /// No description provided for @ttsServicesSectionTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Text-to-Speech'**
+  String get ttsServicesSectionTitle;
 }
 
 class _AppLocalizationsDelegate
