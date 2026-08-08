@@ -168,6 +168,14 @@ class ToolHandlerService {
   // Tool Definitions Builder
   // ============================================================================
 
+  McpToolRouteSnapshot captureMcpToolRoutes(Assistant? assistant) {
+    return contextProvider.read<McpToolService>().captureRoutesForAssistant(
+      contextProvider.read<McpProvider>(),
+      contextProvider.read<AssistantProvider>(),
+      assistantId: assistant?.id,
+    );
+  }
+
   /// Build tool definitions for API call.
   ///
   /// Returns a list of tool definitions including:
@@ -181,6 +189,7 @@ class ToolHandlerService {
     String modelId,
     bool hasBuiltInSearch, {
     required bool Function(String providerKey, String modelId) isToolModel,
+    McpToolRouteSnapshot? mcpRouteSnapshot,
   }) {
     final List<Map<String, dynamic>> toolDefs = <Map<String, dynamic>>[];
     final supportsTools = isToolModel(providerKey, modelId);
@@ -211,6 +220,7 @@ class ToolHandlerService {
       assistant: assistant,
       providerKey: providerKey,
       supportsTools: supportsTools,
+      mcpRouteSnapshot: mcpRouteSnapshot,
     );
     toolDefs.addAll(mcpTools);
 
@@ -284,6 +294,7 @@ class ToolHandlerService {
     required Assistant? assistant,
     required String providerKey,
     required bool supportsTools,
+    McpToolRouteSnapshot? mcpRouteSnapshot,
   }) {
     if (!supportsTools) return [];
 
@@ -293,6 +304,7 @@ class ToolHandlerService {
       mcp,
       contextProvider.read<AssistantProvider>(),
       assistant?.id,
+      routeSnapshot: mcpRouteSnapshot,
     );
 
     if (tools.isEmpty) return [];
@@ -351,12 +363,21 @@ class ToolHandlerService {
     Assistant? assistant, {
     ToolApprovalService? approvalService,
     AskUserInteractionService? askUserService,
+    String? conversationId,
+    McpToolRouteSnapshot? mcpRouteSnapshot,
   }) {
     final mcp = contextProvider.read<McpProvider>();
     final toolSvc = contextProvider.read<McpToolService>();
     // Capture AssistantProvider reference before async gap to avoid
     // use_build_context_synchronously warning
     final assistantProvider = contextProvider.read<AssistantProvider>();
+    final routes =
+        mcpRouteSnapshot ??
+        toolSvc.captureRoutesForAssistant(
+          mcp,
+          assistantProvider,
+          assistantId: assistant?.id,
+        );
 
     return (name, args, {toolCallId}) async {
       try {
@@ -417,6 +438,7 @@ class ToolHandlerService {
                   ? toolCallId!.trim()
                   : '${name}_${DateTime.now().microsecondsSinceEpoch}',
               arguments: args,
+              conversationId: conversationId,
             );
             return result.toJsonString();
           } on AskUserInvalidRequestException catch (e) {
@@ -429,13 +451,21 @@ class ToolHandlerService {
         }
 
         // Approval gate for MCP tools
-        if (approvalService != null && mcp.toolNeedsApproval(name)) {
+        if (approvalService != null &&
+            toolSvc.toolNeedsApprovalForAssistant(
+              mcp,
+              assistantProvider,
+              assistantId: assistant?.id,
+              toolName: name,
+              routeSnapshot: routes,
+            )) {
           // Generate a unique id for this tool call approval request
           final toolCallId = '${name}_${DateTime.now().microsecondsSinceEpoch}';
           final result = await approvalService.requestApproval(
             toolCallId: toolCallId,
             toolName: name,
             arguments: args,
+            conversationId: conversationId,
           );
           if (!result.approved) {
             return _toolError(
@@ -453,6 +483,7 @@ class ToolHandlerService {
           assistantId: assistant?.id,
           toolName: name,
           arguments: args,
+          routeSnapshot: routes,
         );
         return text;
       } catch (e) {
