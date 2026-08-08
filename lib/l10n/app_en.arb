@@ -2500,6 +2500,32 @@
   },
   "timelineJumpToLatest": "Jump to latest",
   "largeContentShowMore": "Show {count} more",
-  "@largeContentShowMore": {"placeholders": {"count": {"type": "int"}}},
-  "largeContentCollapse": "Collapse"
+  "@largeContentShowMore": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "largeContentCollapse": "Collapse",
+  "themeSettingsPageCustomThemesSection": "Custom Themes",
+  "customThemeNewTheme": "New Theme",
+  "customThemeEditTheme": "Edit Theme",
+  "customThemeImportTheme": "Import Theme",
+  "customThemeNameLabel": "Theme name",
+  "customThemePrimaryColor": "Primary",
+  "customThemeSecondaryColor": "Secondary",
+  "customThemeTertiaryColor": "Tertiary",
+  "customThemeColorAuto": "Auto",
+  "customThemeSave": "Save",
+  "customThemeCancel": "Cancel",
+  "customThemeDelete": "Delete",
+  "customThemeDeleteConfirm": "Delete this theme?",
+  "customThemeCopied": "Theme JSON copied to clipboard",
+  "customThemeCopyAction": "Copy",
+  "customThemeImportHint": "Paste the theme JSON here",
+  "customThemeImportInvalid": "Invalid theme JSON",
+  "customThemeHexLabel": "Hex",
+  "themeSettingsPageCustomPaletteName": "Custom",
+  "themeSettingsPageCustomColorReset": "Reset"
 }
