@@ -60,6 +60,8 @@ enum _PendingRegistrationAction { resume, discard }
 
 enum _PendingRegistrationState { awaitingExport, exportConfirmed, unsupported }
 
+enum _ServerChoice { cloudflare, aliyun, custom }
+
 class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
   final TextEditingController _loginNameController = TextEditingController();
   final TextEditingController _displayNameController = TextEditingController();
@@ -304,44 +306,77 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
     );
   }
 
+  _ServerChoice _serverChoice = _ServerChoice.cloudflare;
+  String _customServerUrl = "";
+
+  @override
+  void initState() {
+    super.initState();
+    _initServerChoice();
+  }
+
+  void _initServerChoice() {
+    final current = activeCloudSyncBaseUrl;
+    if (current == defaultCloudSyncBaseUrl) {
+      _serverChoice = _ServerChoice.cloudflare;
+    } else if (current == aliyunCloudSyncBaseUrl) {
+      _serverChoice = _ServerChoice.aliyun;
+    } else {
+      _serverChoice = _ServerChoice.custom;
+      _customServerUrl = current;
+    }
+    _serverUrlController.text = _customServerUrl;
+  }
+
   Widget _buildServerSection(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final isCustom = _serverChoice == _ServerChoice.custom;
     return _Section(
       title: l10n.cloudSyncServerSectionTitle,
       children: [
-        TextField(
-          controller: _serverUrlController,
-          keyboardType: TextInputType.url,
-          autocorrect: false,
-          decoration: InputDecoration(
-            hintText: l10n.cloudSyncServerUrlHint,
-            border: const OutlineInputBorder(),
+        DropdownButtonFormField<_ServerChoice>(
+          value: _serverChoice,
+          decoration: const InputDecoration(
+            border: OutlineInputBorder(),
             isDense: true,
+            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           ),
-        ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(
-              child: IosTileButton(
-                label: l10n.cloudSyncServerUseCloudflare,
-                icon: Lucide.Globe,
-                onTap: () {
-                  _serverUrlController.text = defaultCloudSyncBaseUrl;
-                  _saveServerSelection(context, l10n);
-                },
-              ),
+          items: const <DropdownMenuItem<_ServerChoice>>[
+            DropdownMenuItem(
+              value: _ServerChoice.cloudflare,
+              child: Text("Cloudflare（美国，可能需要梯子）"),
             ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: IosTileButton(
-                label: l10n.cloudSyncServerSave,
-                icon: Lucide.Check,
-                onTap: () => _saveServerSelection(context, l10n),
-              ),
+            DropdownMenuItem(
+              value: _ServerChoice.aliyun,
+              child: Text("阿里云（武汉，无需梯子）"),
             ),
+            DropdownMenuItem(value: _ServerChoice.custom, child: Text("自定义")),
           ],
+          onChanged: (value) {
+            if (value == null) return;
+            setState(() {
+              _serverChoice = value;
+              if (value == _ServerChoice.custom) {
+                _serverUrlController.text = _customServerUrl;
+              }
+            });
+            _saveServerSelection(context, l10n);
+          },
         ),
+        if (isCustom) ...[
+          const SizedBox(height: 8),
+          TextField(
+            controller: _serverUrlController,
+            keyboardType: TextInputType.url,
+            autocorrect: false,
+            decoration: InputDecoration(
+              hintText: l10n.cloudSyncServerUrlHint,
+              border: const OutlineInputBorder(),
+              isDense: true,
+            ),
+            onChanged: (_) => _saveServerSelection(context, l10n),
+          ),
+        ],
       ],
     );
   }
@@ -350,14 +385,23 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
     BuildContext context,
     AppLocalizations l10n,
   ) async {
-    final normalized = _serverUrlController.text.trim();
+    String? normalized;
+    switch (_serverChoice) {
+      case _ServerChoice.cloudflare:
+        normalized = defaultCloudSyncBaseUrl;
+      case _ServerChoice.aliyun:
+        normalized = aliyunCloudSyncBaseUrl;
+      case _ServerChoice.custom:
+        normalized = _serverUrlController.text.trim();
+    }
+    if (normalized == null || normalized.isEmpty) return;
     final prefs = await SharedPreferences.getInstance();
-    if (normalized.isEmpty || normalized == defaultCloudSyncBaseUrl) {
-      cloudSyncBaseUrlOverride = '';
-      await prefs.remove('cloud_sync_base_url_override');
+    if (normalized == defaultCloudSyncBaseUrl) {
+      cloudSyncBaseUrlOverride = "";
+      await prefs.remove("cloud_sync_base_url_override");
     } else {
       cloudSyncBaseUrlOverride = normalized;
-      await prefs.setString('cloud_sync_base_url_override', normalized);
+      await prefs.setString("cloud_sync_base_url_override", normalized);
     }
     if (!context.mounted) return;
     ScaffoldMessenger.of(

@@ -21,6 +21,9 @@ String get activeCloudSyncBaseUrl {
   return trimmed.isEmpty ? defaultCloudSyncBaseUrl : trimmed;
 }
 
+/// 阿里云自托管服务器（武汉，无需梯子）。
+const aliyunCloudSyncBaseUrl = 'https://belovedyaoo.top';
+
 const maximumCloudSyncAttachmentSizeBytes = 100 * 1024 * 1024;
 const cloudSyncOpaqueProtocolVersion = 1;
 const cloudSyncOpaqueRegistrationRequestBytes = 48;
