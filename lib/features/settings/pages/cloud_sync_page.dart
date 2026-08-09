@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:pretty_qr_code/pretty_qr_code.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../core/providers/cloud_sync_provider.dart';
 import '../../../core/services/sync/cloud_sync_types.dart';
@@ -68,6 +69,8 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
   final TextEditingController _recoveryPassphraseConfirmController =
       TextEditingController();
   final TextEditingController _deviceNameController = TextEditingController();
+  final TextEditingController _serverUrlController = TextEditingController();
+  bool _serverUrlInitialized = false;
 
   _CloudSyncAuthenticationMode _authenticationMode =
       _CloudSyncAuthenticationMode.signIn;
@@ -90,6 +93,10 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
       _currentPlatformLabel(l10n),
     );
     _deviceNameInitialized = true;
+    if (!_serverUrlInitialized) {
+      _serverUrlController.text = activeCloudSyncBaseUrl;
+      _serverUrlInitialized = true;
+    }
   }
 
   @override
@@ -105,6 +112,7 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
     _recoveryPassphraseController.dispose();
     _recoveryPassphraseConfirmController.dispose();
     _deviceNameController.dispose();
+    _serverUrlController.dispose();
     super.dispose();
   }
 
@@ -132,6 +140,10 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
         24,
       ),
       children: [
+        if (session == null) ...[
+          _buildServerSection(context),
+          const SizedBox(height: 12),
+        ],
         if (provider.lastError case final error?) ...[
           _ErrorCard(
             title: AppLocalizations.of(context)!.cloudSyncErrorTitle,
@@ -290,6 +302,67 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
         ),
       ],
     );
+  }
+
+  Widget _buildServerSection(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return _Section(
+      title: l10n.cloudSyncServerSectionTitle,
+      children: [
+        TextField(
+          controller: _serverUrlController,
+          keyboardType: TextInputType.url,
+          autocorrect: false,
+          decoration: InputDecoration(
+            hintText: l10n.cloudSyncServerUrlHint,
+            border: const OutlineInputBorder(),
+            isDense: true,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: IosTileButton(
+                label: l10n.cloudSyncServerUseCloudflare,
+                icon: Lucide.Globe,
+                onTap: () {
+                  _serverUrlController.text = defaultCloudSyncBaseUrl;
+                  _saveServerSelection(context, l10n);
+                },
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: IosTileButton(
+                label: l10n.cloudSyncServerSave,
+                icon: Lucide.Check,
+                onTap: () => _saveServerSelection(context, l10n),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Future<void> _saveServerSelection(
+    BuildContext context,
+    AppLocalizations l10n,
+  ) async {
+    final normalized = _serverUrlController.text.trim();
+    final prefs = await SharedPreferences.getInstance();
+    if (normalized.isEmpty || normalized == defaultCloudSyncBaseUrl) {
+      cloudSyncBaseUrlOverride = '';
+      await prefs.remove('cloud_sync_base_url_override');
+    } else {
+      cloudSyncBaseUrlOverride = normalized;
+      await prefs.setString('cloud_sync_base_url_override', normalized);
+    }
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(l10n.cloudSyncServerSwitchNotice)));
   }
 
   Widget _buildAuthenticationSection(

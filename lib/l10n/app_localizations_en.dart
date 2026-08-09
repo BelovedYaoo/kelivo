@@ -6306,4 +6306,21 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get syncConflictOverwriteNotice =>
       'Your change has been overwritten by another device';
+
+  @override
+  String get cloudSyncServerSectionTitle => 'Server';
+
+  @override
+  String get cloudSyncServerUrlHint =>
+      'Server URL (leave empty to use default)';
+
+  @override
+  String get cloudSyncServerUseCloudflare => 'Cloudflare';
+
+  @override
+  String get cloudSyncServerSave => 'Save';
+
+  @override
+  String get cloudSyncServerSwitchNotice =>
+      'Server saved. Sign out and sign in again to use the new server.';
 }

@@ -35,7 +35,7 @@ final class E2eeAccountRecoveryProductionRunner
     required DeviceStateBlobStore deviceStateStore,
     KelivoSecureCore secureCore = const KelivoSecureCore(),
     E2eeDataRekeyStageStore? dataRekeyStageStore,
-    String baseUrl = defaultCloudSyncBaseUrl,
+    String? baseUrl,
     String Function()? uuidFactory,
     CloudSyncAccountRecoveryToken Function()? recoveryTokenFactory,
     CloudSyncFullSessionToken Function()? fullSessionTokenFactory,
@@ -52,7 +52,7 @@ final class E2eeAccountRecoveryProductionRunner
           E2eeDataRekeyStageStore(
             installationRoot: workspaceRuntime.installationRoot,
           ),
-      baseUrl: normalizeCloudSyncBaseUrl(baseUrl),
+      baseUrl: normalizeCloudSyncBaseUrl(baseUrl ?? activeCloudSyncBaseUrl),
       uuidFactory: uuidFactory ?? const Uuid().v4,
       recoveryTokenFactory:
           recoveryTokenFactory ?? CloudSyncAccountRecoveryToken.generate,

@@ -230,7 +230,7 @@ final class CloudSyncClient
 
   factory CloudSyncClient({CloudSyncFullSessionToken? token}) {
     return CloudSyncClient._forBaseUrl(
-      baseUrl: defaultCloudSyncBaseUrl,
+      baseUrl: activeCloudSyncBaseUrl,
       token: token,
     );
   }

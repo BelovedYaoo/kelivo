@@ -2668,5 +2668,10 @@
     }
   },
   "ttsServicesSectionTitle": "文字轉語音",
-  "syncConflictOverwriteNotice": "你的修改已被其他裝置覆蓋"
+  "syncConflictOverwriteNotice": "你的修改已被其他裝置覆蓋",
+  "cloudSyncServerSectionTitle": "伺服器",
+  "cloudSyncServerUrlHint": "伺服器位址（留空使用預設）",
+  "cloudSyncServerUseCloudflare": "Cloudflare",
+  "cloudSyncServerSave": "儲存",
+  "cloudSyncServerSwitchNotice": "伺服器已儲存。請登出並重新登入以使用新伺服器。"
 }

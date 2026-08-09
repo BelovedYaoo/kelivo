@@ -389,7 +389,7 @@ final class AccountWorkspaceRuntime {
       final activeSession = current.session;
       if (activeWorkspaceKey != null &&
           activeSession != null &&
-          (activeSession.baseUrl != defaultCloudSyncBaseUrl ||
+          (activeSession.baseUrl != activeCloudSyncBaseUrl ||
               activeSession.isExpiredAt(now))) {
         // 不可再使用的凭证必须先由 tombstone 压过，再清除注册表选择。
         final tokensCleaned = await _writeSessionTombstone(

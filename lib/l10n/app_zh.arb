@@ -2668,5 +2668,10 @@
     }
   },
   "ttsServicesSectionTitle": "文字转语音",
-  "syncConflictOverwriteNotice": "你的修改已被其他设备覆盖"
+  "syncConflictOverwriteNotice": "你的修改已被其他设备覆盖",
+  "cloudSyncServerSectionTitle": "服务器",
+  "cloudSyncServerUrlHint": "服务器地址（留空使用默认）",
+  "cloudSyncServerUseCloudflare": "Cloudflare",
+  "cloudSyncServerSave": "保存",
+  "cloudSyncServerSwitchNotice": "服务器已保存。请退出并重新登录以使用新服务器。"
 }

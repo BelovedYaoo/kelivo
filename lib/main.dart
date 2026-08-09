@@ -86,6 +86,7 @@ import 'dart:io'
 import 'core/services/android_background.dart';
 import 'core/services/notification_service.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:kelivo_durable_preferences/kelivo_durable_preferences.dart';
 import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 
@@ -165,6 +166,10 @@ Future<void> main() async {
     () async {
       WidgetsFlutterBinding.ensureInitialized();
       staticUnhandledErrorBoundary.install();
+      // 恢复自托管服务器地址选择（本地偏好，不参与同步）。
+      final baseUrlPrefs = await SharedPreferences.getInstance();
+      cloudSyncBaseUrlOverride =
+          baseUrlPrefs.getString('cloud_sync_base_url_override') ?? '';
       late final E2eeMobileBackgroundSyncScheduler
       mobileBackgroundSyncScheduler;
       const secureCore = KelivoSecureCore();
@@ -413,7 +418,7 @@ _E2eeRuntimeComposition? _createE2eeRuntimeComposition({
 }) {
   final session = workspaceRuntime.current.session;
   if (session == null ||
-      session.baseUrl != defaultCloudSyncBaseUrl ||
+      session.baseUrl != activeCloudSyncBaseUrl ||
       session.isExpiredAt(DateTime.now().toUtc())) {
     return null;
   }
@@ -519,7 +524,7 @@ final class _E2eeRuntimeComposition {
     // 独立接口无法通过类型提升收窄，显式转换保留运行时检查语义。
     final dataRekeyTransport = client as CloudSyncDataRekeyTransport;
     return E2eeDeviceRevocationProductionRuntime.create(
-      baseUrl: defaultCloudSyncBaseUrl,
+      baseUrl: activeCloudSyncBaseUrl,
       normalizedLoginName: currentDeviceSelfRevocation.normalizedLoginName,
       deviceStateStore: deviceStateStore,
       secureCore: secureCore,
@@ -561,7 +566,7 @@ Future<void> _finalizeRestartedAccountRecovery(
     runner = E2eeAccountRecoveryProductionRunner(
       client: client,
       authentication: E2eeAccountAuthenticator(
-        baseUrl: defaultCloudSyncBaseUrl,
+        baseUrl: activeCloudSyncBaseUrl,
         accountClient: client,
         deviceStateStore: deviceStateStore,
         secureCore: const KelivoSecureCore(),

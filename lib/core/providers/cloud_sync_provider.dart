@@ -227,7 +227,7 @@ final class CloudSyncProvider extends ChangeNotifier
         authenticationFactory ??
         (accountClient, {firstDeviceBootstrapPreparer}) =>
             E2eeAccountAuthenticator(
-              baseUrl: defaultCloudSyncBaseUrl,
+              baseUrl: activeCloudSyncBaseUrl,
               accountClient: accountClient,
               deviceStateStore: DeviceStateBlobStore(
                 installationRoot: _workspaceRuntime.installationRoot,
@@ -356,7 +356,7 @@ final class CloudSyncProvider extends ChangeNotifier
     try {
       final session = _workspaceRuntime.current.session;
       if (session != null &&
-          (session.baseUrl != defaultCloudSyncBaseUrl ||
+          (session.baseUrl != activeCloudSyncBaseUrl ||
               session.isExpiredAt(DateTime.now().toUtc()))) {
         await _workspaceRuntime.signOut();
         _workspaceRestartRequired = true;
@@ -1665,7 +1665,7 @@ final class CloudSyncProvider extends ChangeNotifier
     CloudSyncAuthenticatedSession authenticatedSession,
   ) async {
     final session = CloudSyncAccountSession.fromAuthenticatedSession(
-      baseUrl: defaultCloudSyncBaseUrl,
+      baseUrl: activeCloudSyncBaseUrl,
       session: authenticatedSession,
     );
     final workspaceBinding = await _workspaceRuntime.bindAccount(session);

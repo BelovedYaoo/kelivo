@@ -11533,6 +11533,36 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Your change has been overwritten by another device'**
   String get syncConflictOverwriteNotice;
+
+  /// No description provided for @cloudSyncServerSectionTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Server'**
+  String get cloudSyncServerSectionTitle;
+
+  /// No description provided for @cloudSyncServerUrlHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Server URL (leave empty to use default)'**
+  String get cloudSyncServerUrlHint;
+
+  /// No description provided for @cloudSyncServerUseCloudflare.
+  ///
+  /// In en, this message translates to:
+  /// **'Cloudflare'**
+  String get cloudSyncServerUseCloudflare;
+
+  /// No description provided for @cloudSyncServerSave.
+  ///
+  /// In en, this message translates to:
+  /// **'Save'**
+  String get cloudSyncServerSave;
+
+  /// No description provided for @cloudSyncServerSwitchNotice.
+  ///
+  /// In en, this message translates to:
+  /// **'Server saved. Sign out and sign in again to use the new server.'**
+  String get cloudSyncServerSwitchNotice;
 }
 
 class _AppLocalizationsDelegate

@@ -6039,6 +6039,21 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get syncConflictOverwriteNotice => '你的修改已被其他设备覆盖';
+
+  @override
+  String get cloudSyncServerSectionTitle => '服务器';
+
+  @override
+  String get cloudSyncServerUrlHint => '服务器地址（留空使用默认）';
+
+  @override
+  String get cloudSyncServerUseCloudflare => 'Cloudflare';
+
+  @override
+  String get cloudSyncServerSave => '保存';
+
+  @override
+  String get cloudSyncServerSwitchNotice => '服务器已保存。请退出并重新登录以使用新服务器。';
 }
 
 /// The translations for Chinese, using the Han script (`zh_Hans`).
@@ -12076,6 +12091,21 @@ class AppLocalizationsZhHans extends AppLocalizationsZh {
 
   @override
   String get syncConflictOverwriteNotice => '你的修改已被其他设备覆盖';
+
+  @override
+  String get cloudSyncServerSectionTitle => '服务器';
+
+  @override
+  String get cloudSyncServerUrlHint => '服务器地址（留空使用默认）';
+
+  @override
+  String get cloudSyncServerUseCloudflare => 'Cloudflare';
+
+  @override
+  String get cloudSyncServerSave => '保存';
+
+  @override
+  String get cloudSyncServerSwitchNotice => '服务器已保存。请退出并重新登录以使用新服务器。';
 }
 
 /// The translations for Chinese, using the Han script (`zh_Hant`).
@@ -18114,4 +18144,19 @@ class AppLocalizationsZhHant extends AppLocalizationsZh {
 
   @override
   String get syncConflictOverwriteNotice => '你的修改已被其他裝置覆蓋';
+
+  @override
+  String get cloudSyncServerSectionTitle => '伺服器';
+
+  @override
+  String get cloudSyncServerUrlHint => '伺服器位址（留空使用預設）';
+
+  @override
+  String get cloudSyncServerUseCloudflare => 'Cloudflare';
+
+  @override
+  String get cloudSyncServerSave => '儲存';
+
+  @override
+  String get cloudSyncServerSwitchNotice => '伺服器已儲存。請登出並重新登入以使用新伺服器。';
 }

@@ -12,6 +12,15 @@ part 'cloud_sync_data_rekey_transport_types.dart';
 typedef CloudSyncJsonMap = Map<String, Object?>;
 
 const defaultCloudSyncBaseUrl = 'https://kelivo.bemylover.top';
+
+/// 自托管服务器地址覆盖（空 = 使用 Cloudflare 默认）。设置页切换后更新，
+/// 登录/恢复/注册与既有会话校验统一走 [activeCloudSyncBaseUrl]。
+String cloudSyncBaseUrlOverride = '';
+String get activeCloudSyncBaseUrl {
+  final trimmed = cloudSyncBaseUrlOverride.trim();
+  return trimmed.isEmpty ? defaultCloudSyncBaseUrl : trimmed;
+}
+
 const maximumCloudSyncAttachmentSizeBytes = 100 * 1024 * 1024;
 const cloudSyncOpaqueProtocolVersion = 1;
 const cloudSyncOpaqueRegistrationRequestBytes = 48;
