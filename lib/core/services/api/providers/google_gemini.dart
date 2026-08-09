@@ -6,6 +6,12 @@ final RegExp _geminiThoughtSigComment = RegExp(
   dotAll: true,
 );
 
+/// Placeholder thought signature accepted by the Gemini API when the original
+/// signature is unavailable (e.g. legacy history persisted before signatures
+/// were captured). Same value used by Google's own Gemini CLI.
+const String _geminiDummyThoughtSignature =
+    'context_engineering_is_the_way_to_go';
+
 // YouTube URL regex: watch, shorts, embed, youtu.be (with optional timestamps)
 final RegExp _youtubeUrlRegex = RegExp(
   r'(https?://(?:www\.)?(?:youtube\.com/(?:watch\?v=|shorts/|embed/)|youtu\.be/)[a-zA-Z0-9_-]+(?:[?&][^\s<>()]*)?)',
@@ -116,7 +122,7 @@ void _applyGeminiThoughtSignatures(
       }
     }
   } else if (attachDummyWhenMissing) {
-    const dummy = 'context_engineering_is_the_way_to_go';
+    const dummy = _geminiDummyThoughtSignature;
     bool inlineFound = false;
     bool textTagged = false;
     for (final part in parts) {

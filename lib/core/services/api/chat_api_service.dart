@@ -1472,6 +1472,10 @@ class ChatStreamChunk {
   final String content;
   // Optional reasoning delta (when model supports reasoning)
   final String? reasoning;
+  // Optional vendor reasoning details (OpenRouter-style `reasoning_details`
+  // array, may carry thinking signatures). Emitted as a cumulative snapshot so
+  // it can be persisted and echoed back on later requests.
+  final dynamic reasoningDetails;
   final bool isDone;
   final int totalTokens;
   final TokenUsage? usage;
@@ -1481,6 +1485,7 @@ class ChatStreamChunk {
   ChatStreamChunk({
     required this.content,
     this.reasoning,
+    this.reasoningDetails,
     required this.isDone,
     required this.totalTokens,
     this.usage,

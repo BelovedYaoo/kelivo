@@ -183,6 +183,59 @@ void _normalizeMoonshotKimiChatBody(
   }
 }
 
+/// Accumulates streamed `reasoning_details` entries.
+///
+/// OpenRouter streams the array as ordered deltas (each chunk may carry one
+/// or more new entries) that must be concatenated and replayed unmodified
+/// and in the original order, so chunks are appended by default and identical
+/// consecutive deltas are preserved. Some other providers instead resend the
+/// full array-so-far with each chunk; for those (when [allowSnapshots] is
+/// set) a chunk that positively looks like such a cumulative snapshot (same
+/// entries plus new ones appended) switches the accumulator to snapshot
+/// mode, and later chunks replace the buffer instead of appending
+/// duplicates. For OpenRouter itself [allowSnapshots] is cleared because its
+/// documented semantics are always delta-style concatenation.
+class _ReasoningDetailsAccumulator {
+  _ReasoningDetailsAccumulator({this.allowSnapshots = true});
+
+  /// Whether cumulative-snapshot detection is enabled (false for OpenRouter,
+  /// whose documented semantics are delta-style concatenation).
+  final bool allowSnapshots;
+  List<dynamic> _details = const <dynamic>[];
+  bool _snapshotMode = false;
+
+  /// The accumulated entries, or null when nothing was captured.
+  List<dynamic>? get detailsOrNull => _details.isEmpty ? null : _details;
+
+  void add(List<dynamic> incoming) {
+    if (incoming.isEmpty) return;
+    if (_details.isEmpty) {
+      _details = List<dynamic>.of(incoming);
+      return;
+    }
+    final prefixMatches = allowSnapshots && _hasCurrentAsPrefix(incoming);
+    if (prefixMatches && incoming.length > _details.length) {
+      // Positive evidence of a cumulative snapshot: same prefix, but longer.
+      _snapshotMode = true;
+      _details = List<dynamic>.of(incoming);
+      return;
+    }
+    if (_snapshotMode && prefixMatches) {
+      // Snapshot-style resend of the same array; keep the buffer as-is.
+      return;
+    }
+    _details = <dynamic>[..._details, ...incoming];
+  }
+
+  bool _hasCurrentAsPrefix(List<dynamic> incoming) {
+    if (incoming.length < _details.length) return false;
+    for (var i = 0; i < _details.length; i++) {
+      if (jsonEncode(_details[i]) != jsonEncode(incoming[i])) return false;
+    }
+    return true;
+  }
+}
+
 Map<String, dynamic> _buildAssistantToolCallMessage({
   required List<Map<String, dynamic>> calls,
   dynamic content,
@@ -559,6 +612,7 @@ Future<List<Map<String, dynamic>>> _buildOpenAIChatCompletionMessages(
   List<Map<String, dynamic>> messages, {
   List<String>? userMediaPaths,
   required bool canImageInput,
+  bool stripUnsignedReasoningContent = false,
 }) async {
   final out = <Map<String, dynamic>>[];
   for (int i = 0; i < messages.length; i++) {
@@ -572,6 +626,20 @@ Future<List<Map<String, dynamic>>> _buildOpenAIChatCompletionMessages(
     final outMsg = Map<String, dynamic>.from(m);
     outMsg.remove(multimodalInternalMediaPathsKey);
     outMsg['role'] = role;
+
+    // Claude models behind OpenAI-compatible proxies rebuild Anthropic
+    // thinking blocks from `reasoning_content`; without a matching signature
+    // (carried by `reasoning_details`) the upstream rejects the request with
+    // "thinking.signature: Field required". Drop the unsigned echo — Anthropic
+    // accepts history without thinking blocks, but not with invalid ones.
+    if (stripUnsignedReasoningContent && role == 'assistant') {
+      final details = outMsg['reasoning_details'];
+      final hasSignedDetails = details is List && details.isNotEmpty;
+      if (!hasSignedDetails) {
+        outMsg.remove('reasoning_content');
+        outMsg.remove('reasoning');
+      }
+    }
 
     if (originalContent is List) {
       outMsg['content'] = canImageInput ? originalContent : raw;
@@ -777,7 +845,6 @@ class _OpenAIProviderInfo {
 
   bool get needsReasoningEcho =>
       isDeepSeek || isMimo || isZhipu || isKimiThinkingModel;
-  bool get preserveReasoningDetails => isOpenRouter;
   String get completionTokensKey =>
       (isAzureOpenAI || isMimo) ? 'max_completion_tokens' : 'max_tokens';
 }
@@ -885,6 +952,9 @@ Stream<ChatStreamChunk> _sendOpenAIStream(
 }) async* {
   final upstreamModelId = _apiModelId(config, modelId);
   final url = _openAICompatibleUrl(config);
+  // Claude models served through OpenAI-compatible proxies require signed
+  // thinking blocks; unsigned reasoning echoes are stripped before sending.
+  final isClaudeUpstream = upstreamModelId.toLowerCase().contains('claude');
 
   final effectiveInfo = _effectiveModelInfo(config, modelId);
   final isReasoning = effectiveInfo.abilities.contains(ModelAbility.reasoning);
@@ -902,8 +972,11 @@ Stream<ChatStreamChunk> _sendOpenAIStream(
     upstreamModelId,
   );
   final bool needsReasoningEcho = info.needsReasoningEcho && isReasoning;
-  final bool preserveReasoningDetails =
-      info.preserveReasoningDetails && isReasoning;
+  // OpenRouter documents delta-style `reasoning_details` chunks that must be
+  // concatenated in order, so cumulative-snapshot detection is disabled for
+  // it; other providers may resend the full array-so-far with each chunk.
+  final reasoningDetailsAllowSnapshots =
+      !BuiltInToolsHelper.isOpenRouterProvider(config);
   void setMaxTokens(Map<String, dynamic> map) {
     if (maxTokens != null) map[info.completionTokensKey] = maxTokens;
   }
@@ -1281,6 +1354,7 @@ Stream<ChatStreamChunk> _sendOpenAIStream(
         messages,
         userMediaPaths: userImagePaths,
         canImageInput: canImageInput,
+        stripUnsignedReasoningContent: isClaudeUpstream,
       );
       body = {
         'model': upstreamModelId,
@@ -1584,9 +1658,7 @@ Stream<ChatStreamChunk> _sendOpenAIStream(
             content: msg['content'],
             reasoningContent: needsReasoningEcho ? reasoningForTools : null,
             includeEmptyReasoningContent: needsReasoningEcho,
-            reasoningDetails: preserveReasoningDetails
-                ? reasoningDetailsForTools
-                : null,
+            reasoningDetails: reasoningDetailsForTools,
           );
           next.add(assistantToolCallMsg);
           for (final r in results) {
@@ -1614,6 +1686,7 @@ Stream<ChatStreamChunk> _sendOpenAIStream(
                   next,
                   userMediaPaths: userImagePaths,
                   canImageInput: canImageInput,
+                  stripUnsignedReasoningContent: isClaudeUpstream,
                 );
           reqBody.remove('stream');
           req.body = jsonEncode(reqBody);
@@ -1661,6 +1734,7 @@ Stream<ChatStreamChunk> _sendOpenAIStream(
         }
         yield ChatStreamChunk(
           content: content,
+          reasoningDetails: cmsg?['reasoning_details'],
           isDone: true,
           totalTokens: aggUsage?.totalTokens ?? 0,
           usage: aggUsage,
@@ -1686,7 +1760,9 @@ Stream<ChatStreamChunk> _sendOpenAIStream(
   final int approxPromptTokens = approxTokensFromChars(approxPromptChars);
   int approxCompletionChars = 0;
   String reasoningBuffer = '';
-  dynamic reasoningDetailsBuffer;
+  final reasoningDetailsBuffer = _ReasoningDetailsAccumulator(
+    allowSnapshots: reasoningDetailsAllowSnapshots,
+  );
   String assistantContentBuffer = '';
 
   // Track potential tool calls (OpenAI Chat Completions)
@@ -1786,9 +1862,7 @@ Stream<ChatStreamChunk> _sendOpenAIStream(
             content: assistantContentBuffer,
             reasoningContent: needsReasoningEcho ? reasoningBuffer : null,
             includeEmptyReasoningContent: needsReasoningEcho,
-            reasoningDetails: preserveReasoningDetails
-                ? reasoningDetailsBuffer
-                : null,
+            reasoningDetails: reasoningDetailsBuffer.detailsOrNull,
           );
           mm2.add(assistantToolCallMsg);
           for (final r in results) {
@@ -1834,6 +1908,7 @@ Stream<ChatStreamChunk> _sendOpenAIStream(
                       currentMessages,
                       userMediaPaths: userImagePaths,
                       canImageInput: canImageInput,
+                      stripUnsignedReasoningContent: isClaudeUpstream,
                     ),
                     'stream': true,
                     if (temperature != null) 'temperature': temperature,
@@ -1917,7 +1992,9 @@ Stream<ChatStreamChunk> _sendOpenAIStream(
             String? finishReason2;
             String contentAccum = ''; // Accumulate content for this round
             String reasoningAccum = '';
-            dynamic reasoningDetailsAccum;
+            final reasoningDetailsAccum = _ReasoningDetailsAccumulator(
+              allowSnapshots: reasoningDetailsAllowSnapshots,
+            );
             await for (final ch in _ensureTrailingNewline(s2)) {
               buf2 += ch;
               final lines2 = buf2.split('\n');
@@ -2013,15 +2090,13 @@ Stream<ChatStreamChunk> _sendOpenAIStream(
                         reasoningAccum += rcMsg;
                       }
                     }
-                    if (preserveReasoningDetails) {
-                      final rd = delta?['reasoning_details'];
-                      if (rd is List && rd.isNotEmpty) {
-                        reasoningDetailsAccum = rd;
-                      }
-                      final rdMsg = message?['reasoning_details'];
-                      if (rdMsg is List && rdMsg.isNotEmpty) {
-                        reasoningDetailsAccum = rdMsg;
-                      }
+                    final rd = delta?['reasoning_details'];
+                    if (rd is List && rd.isNotEmpty) {
+                      reasoningDetailsAccum.add(rd);
+                    }
+                    final rdMsg = message?['reasoning_details'];
+                    if (rdMsg is List && rdMsg.isNotEmpty) {
+                      reasoningDetailsAccum.add(rdMsg);
                     }
                     // Handle image outputs from OpenRouter-style deltas
                     // Possible shapes:
@@ -2170,9 +2245,7 @@ Stream<ChatStreamChunk> _sendOpenAIStream(
                 content: contentAccum,
                 reasoningContent: needsReasoningEcho ? reasoningAccum : null,
                 includeEmptyReasoningContent: needsReasoningEcho,
-                reasoningDetails: preserveReasoningDetails
-                    ? reasoningDetailsAccum
-                    : null,
+                reasoningDetails: reasoningDetailsAccum.detailsOrNull,
               );
               currentMessages = [
                 ...currentMessages,
@@ -2199,6 +2272,7 @@ Stream<ChatStreamChunk> _sendOpenAIStream(
                   approxTokensFromChars(approxCompletionChars);
               yield ChatStreamChunk(
                 content: '',
+                reasoningDetails: reasoningDetailsAccum.detailsOrNull,
                 isDone: true,
                 totalTokens: usage?.totalTokens ?? approxTotal,
                 usage: usage,
@@ -2212,6 +2286,7 @@ Stream<ChatStreamChunk> _sendOpenAIStream(
             approxPromptTokens + approxTokensFromChars(approxCompletionChars);
         yield ChatStreamChunk(
           content: '',
+          reasoningDetails: reasoningDetailsBuffer.detailsOrNull,
           isDone: true,
           totalTokens: usage?.totalTokens ?? approxTotal,
           usage: usage,
@@ -2912,9 +2987,9 @@ Stream<ChatStreamChunk> _sendOpenAIStream(
                 reasoning = rc;
                 if (needsReasoningEcho) reasoningBuffer += rc;
               }
-              if (preserveReasoningDetails) {
-                final rd = delta['reasoning_details'];
-                if (rd is List && rd.isNotEmpty) reasoningDetailsBuffer = rd;
+              final rd = delta['reasoning_details'];
+              if (rd is List && rd.isNotEmpty) {
+                reasoningDetailsBuffer.add(rd);
               }
 
               // images handling from delta (unchanged)
@@ -2979,10 +3054,10 @@ Stream<ChatStreamChunk> _sendOpenAIStream(
               }
             }
 
-            if (preserveReasoningDetails && message != null) {
+            if (message != null) {
               final rdMsg = message['reasoning_details'];
               if (rdMsg is List && rdMsg.isNotEmpty) {
-                reasoningDetailsBuffer = rdMsg;
+                reasoningDetailsBuffer.add(rdMsg);
               }
             }
 
@@ -3179,9 +3254,7 @@ Stream<ChatStreamChunk> _sendOpenAIStream(
             content: assistantContentBuffer,
             reasoningContent: needsReasoningEcho ? reasoningBuffer : null,
             includeEmptyReasoningContent: needsReasoningEcho,
-            reasoningDetails: preserveReasoningDetails
-                ? reasoningDetailsBuffer
-                : null,
+            reasoningDetails: reasoningDetailsBuffer.detailsOrNull,
           );
           mm2.add(assistantToolCallMsg);
           for (final r in results) {
@@ -3226,6 +3299,7 @@ Stream<ChatStreamChunk> _sendOpenAIStream(
                       currentMessages,
                       userMediaPaths: userImagePaths,
                       canImageInput: canImageInput,
+                      stripUnsignedReasoningContent: isClaudeUpstream,
                     ),
                     'stream': true,
                     if (temperature != null) 'temperature': temperature,
@@ -3300,7 +3374,9 @@ Stream<ChatStreamChunk> _sendOpenAIStream(
             String? finishReason2;
             String contentAccum = '';
             String reasoningAccum = '';
-            dynamic reasoningDetailsAccum;
+            final reasoningDetailsAccum = _ReasoningDetailsAccumulator(
+              allowSnapshots: reasoningDetailsAllowSnapshots,
+            );
             await for (final ch in _ensureTrailingNewline(s2)) {
               buf2 += ch;
               final lines2 = buf2.split('\n');
@@ -3467,15 +3543,13 @@ Stream<ChatStreamChunk> _sendOpenAIStream(
                         reasoningAccum += rcMsg;
                       }
                     }
-                    if (preserveReasoningDetails) {
-                      final rd = delta?['reasoning_details'];
-                      if (rd is List && rd.isNotEmpty) {
-                        reasoningDetailsAccum = rd;
-                      }
-                      final rdMsg = message?['reasoning_details'];
-                      if (rdMsg is List && rdMsg.isNotEmpty) {
-                        reasoningDetailsAccum = rdMsg;
-                      }
+                    final rd = delta?['reasoning_details'];
+                    if (rd is List && rd.isNotEmpty) {
+                      reasoningDetailsAccum.add(rd);
+                    }
+                    final rdMsg = message?['reasoning_details'];
+                    if (rdMsg is List && rdMsg.isNotEmpty) {
+                      reasoningDetailsAccum.add(rdMsg);
                     }
                   }
                   // XinLiu compatibility for follow-up requests too
@@ -3575,9 +3649,7 @@ Stream<ChatStreamChunk> _sendOpenAIStream(
                 content: contentAccum,
                 reasoningContent: needsReasoningEcho ? reasoningAccum : null,
                 includeEmptyReasoningContent: needsReasoningEcho,
-                reasoningDetails: preserveReasoningDetails
-                    ? reasoningDetailsAccum
-                    : null,
+                reasoningDetails: reasoningDetailsAccum.detailsOrNull,
               );
               currentMessages = [
                 ...currentMessages,
@@ -3692,9 +3764,7 @@ Stream<ChatStreamChunk> _sendOpenAIStream(
                 content: assistantContentBuffer,
                 reasoningContent: needsReasoningEcho ? reasoningBuffer : null,
                 includeEmptyReasoningContent: needsReasoningEcho,
-                reasoningDetails: preserveReasoningDetails
-                    ? reasoningDetailsBuffer
-                    : null,
+                reasoningDetails: reasoningDetailsBuffer.detailsOrNull,
               );
               mm2.add(assistantToolCallMsg);
               for (final r in results) {
@@ -3739,6 +3809,7 @@ Stream<ChatStreamChunk> _sendOpenAIStream(
                           currentMessages,
                           userMediaPaths: userImagePaths,
                           canImageInput: canImageInput,
+                          stripUnsignedReasoningContent: isClaudeUpstream,
                         ),
                         'stream': true,
                         if (temperature != null) 'temperature': temperature,
@@ -3814,7 +3885,9 @@ Stream<ChatStreamChunk> _sendOpenAIStream(
                 String? finishReason2;
                 String contentAccum = '';
                 String reasoningAccum = '';
-                dynamic reasoningDetailsAccum;
+                final reasoningDetailsAccum = _ReasoningDetailsAccumulator(
+                  allowSnapshots: reasoningDetailsAllowSnapshots,
+                );
                 await for (final ch in _ensureTrailingNewline(s2)) {
                   buf2 += ch;
                   final lines2 = buf2.split('\n');
@@ -3956,15 +4029,13 @@ Stream<ChatStreamChunk> _sendOpenAIStream(
                             reasoningAccum += rcMsg;
                           }
                         }
-                        if (preserveReasoningDetails) {
-                          final rd = delta?['reasoning_details'];
-                          if (rd is List && rd.isNotEmpty) {
-                            reasoningDetailsAccum = rd;
-                          }
-                          final rdMsg = message?['reasoning_details'];
-                          if (rdMsg is List && rdMsg.isNotEmpty) {
-                            reasoningDetailsAccum = rdMsg;
-                          }
+                        final rd = delta?['reasoning_details'];
+                        if (rd is List && rd.isNotEmpty) {
+                          reasoningDetailsAccum.add(rd);
+                        }
+                        final rdMsg = message?['reasoning_details'];
+                        if (rdMsg is List && rdMsg.isNotEmpty) {
+                          reasoningDetailsAccum.add(rdMsg);
                         }
                       }
                       // XinLiu compatibility for follow-up requests too
@@ -4067,9 +4138,7 @@ Stream<ChatStreamChunk> _sendOpenAIStream(
                         ? reasoningAccum
                         : null,
                     includeEmptyReasoningContent: needsReasoningEcho,
-                    reasoningDetails: preserveReasoningDetails
-                        ? reasoningDetailsAccum
-                        : null,
+                    reasoningDetails: reasoningDetailsAccum.detailsOrNull,
                   );
                   currentMessages = [
                     ...currentMessages,
@@ -4094,6 +4163,7 @@ Stream<ChatStreamChunk> _sendOpenAIStream(
                       approxTokensFromChars(approxCompletionChars);
                   yield ChatStreamChunk(
                     content: '',
+                    reasoningDetails: reasoningDetailsAccum.detailsOrNull,
                     isDone: true,
                     totalTokens: usage?.totalTokens ?? approxTotal,
                     usage: usage,
