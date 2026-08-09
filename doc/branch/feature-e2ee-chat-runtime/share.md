@@ -162,6 +162,13 @@
   - bde7a76e（53f3fe3f）：编辑助手消息重生成作新回复。repository 提取 _truncateLinearMessageGroupsAfter（删除 anchor 后所有消息组），新增 beginAssistantGeneration；chat_service E2EE 适配（截断走 runLocalBatch 生成同步意图批次）；chat_actions 分支 assistantAsNewReply && role==assistant → 新回复；_versionSelections 改 groupId 判空。matrix/repository/regeneration 28/28 通过。
   - f5c65d46（16c2d655）：MCP 远程会话复用。mcp_client 子包升级（streamable_http POST SSE 游标续传/请求槽/Retry-After、sse_parser 新增、TransportSendOperation API）；mcp_provider 重构为 _ServerConnection（connect 并发去重 + 已连接会话复用 + 失败冷却 429/503 + generation 使在途失效 + onError 会话过期 404+sessionId 自动恢复 + refreshTools 会话过期恢复去重）；kelivo_fetch/mcp_page 适配。子包 sse/redirect 10/10、主仓库 mcp/tool_handler/云同步 152/152、debug APK 构建通过。
   - 预存失败（与三项无关）：business_shared_preferences_static_gate（上游 3fc76cc8 SQLite 迁移 allowlist vs E2EE 保留 prefs 访问，合并时已存在）；mcp 加密测试受 Windows DLL 锁限制（secure-core 隔离入口待锁释放复验）。
+- 已完成（2026-08-08 遗留项复核与收尾，main@待提交）：scout 并行复核全部遗留 issue，多数已实现（旧记录过时）：
+  - #51 成员清单 v2：Dart+Rust 两侧均已 v2（header 260B/offset 224 operationAuthorizationDigest/memberCount@256），op3 自撤销 intentDigest 绑定 + 跨语言固定向量测试锁定——无需改动，发布门禁的两端对齐已达成。
+  - #49 移动恢复 UI：导出（mobile_recovery_media_export_page）+ 导入（mobile_account_recovery_page）+ Native FFI 装配（e2ee_account_authenticator/main.dart）全链已接通；本次补 AndroidManifest CAMERA 权限 + uses-feature 显式声明（mobile_scanner 依赖库合并，软点收敛）。
+  - #84/#85：持久明文日志退役与受管根句柄删除完整链路已落地（含 Android /data/user/0 bind mount 别名验证、openat 避 SIGSYS、SharedPreferences 删除证明 ABI20）；恢复介质页两处 developer.log 复核为静态事件（固定 name/level/无变量），符合惯例无需改。
+  - #112：全量导入同步意图链路闭环（runImportBatch/importPortableChats 同事务写 intent+outbox + _recoverStartup 崩溃恢复），merge 已按 #115 不生成——关闭；restoreDatabaseSnapshot/replaceBackupSnapshot 死代码（无生产调用方）记录为可选清理。
+  - #113：跨存储持久补偿的原始场景已被「导入同事务 + outbox 跨重启恢复」覆盖——建议关闭或改记为已覆盖。
+  - #116：已修——DioHttpClient 支持注入 HttpClientAdapter，网络失败测试改用 _FailingDioAdapter 确定性失败（替代 bind/close 端口方案，消除端口复用竞态）；handshake 测试保持真实网络（testWidgets 会 mock 400 不适用），单跑稳定、并行偶发挂起属环境级。
 - 已完成（2026-08-08 预存失败处置，main@61d60966）：
   - business_shared_preferences_static_gate 已解决：E2EE 版未采用上游 SQLite 业务迁移（本地工作区配置以 prefs 为真相源），allowlist 更新为实际 23 个合法访问者并注明理由；pinned/titles 允许 chat_provider。CI 全量跑该测试，此前必红。
   - mcp_provider 本地槽创建加实例级互斥（并发连接本地服务器时原生槽状态机不支持并发 createSlot）。
