@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
+import 'package:dio/dio.dart';
 import 'package:Kelivo/core/providers/settings_provider.dart';
 import 'package:Kelivo/core/services/network/dio_http_client.dart';
 import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
@@ -90,13 +92,9 @@ void main() {
     );
     final previousHttpOverrides = HttpOverrides.current;
     HttpOverrides.global = null;
-    final unavailableServer = await HttpServer.bind(
-      InternetAddress.loopbackIPv4,
-      0,
-    );
-    final unavailablePort = unavailableServer.port;
-    await unavailableServer.close(force: true);
-    final client = DioHttpClient();
+    // 注入失败 adapter：真实端口拒绝在并行测试下存在端口复用竞态（#116），
+    // adapter 层确定性抛连接错误，保持『网络失败不落盘』的断言语义。
+    final client = DioHttpClient(adapter: _FailingDioAdapter());
     addTearDown(() async {
       client.close();
       HttpOverrides.global = previousHttpOverrides;
@@ -119,7 +117,7 @@ void main() {
             'POST',
             Uri.parse(
               'http://${InternetAddress.loopbackIPv4.address}:'
-              '$unavailablePort/chat?credential=failure-query-sentinel',
+              '1/chat?credential=failure-query-sentinel',
             ),
           )
           ..headers['Authorization'] = 'Bearer failure-authorization-sentinel'
@@ -152,4 +150,24 @@ void main() {
       ),
     );
   });
+}
+
+/// 确定性网络失败：所有请求在发送前抛连接错误，避免真实端口拒绝在并行
+/// 测试下的端口复用竞态（#116）。DioHttpClient.send 会把 DioException 统一
+/// 包装为 http.ClientException。
+class _FailingDioAdapter implements HttpClientAdapter {
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    throw DioException.connectionError(
+      requestOptions: options,
+      reason: 'simulated network failure',
+    );
+  }
+
+  @override
+  void close({bool force = false}) {}
 }
