@@ -37,6 +37,7 @@ import 'e2ee_sync_outbox.dart';
 import 'e2ee_sync_execution_budget.dart';
 import 'e2ee_sync_pull.dart';
 import 'e2ee_sync_scheduler.dart';
+import 'e2ee_realtime_sync_listener.dart';
 import 'sync_codec.dart';
 import 'sync_write_executor.dart';
 
@@ -213,6 +214,7 @@ final class E2eeChatContentRuntime
   _materializedSourceRetirements =
       Expando<_MaterializedAttachmentSourceRetirement>();
   E2eeSyncScheduler? _scheduler;
+  E2eeRealtimeSyncListener? _realtimeListener;
   E2eeSyncCycleRunner Function(E2eeSyncExecutionBudget?)? _cycleRunnerFactory;
   Future<E2eeSyncCycleReport>? _activeSingleCycle;
   Future<void>? _initializationFuture;
@@ -570,6 +572,23 @@ final class E2eeChatContentRuntime
               _onSecurityStateChanged ?? _ignoreRuntimeSecurityStateChange,
         );
         _scheduler = scheduler;
+        _realtimeListener = E2eeRealtimeSyncListener(
+          baseUrl: _session.baseUrl,
+          tokenProvider: () => _session.token,
+          readChangeSeq: () async {
+            final checkpoint = await repository.e2eeSyncPullCommands
+                .readOrCreate(accountUserId: _session.userId, now: _utcNow());
+            return checkpoint.lastChangeSeq;
+          },
+          onChanges: () => _scheduler?.wake(),
+          onAuthFailure: () => _handleTerminalAuthenticationFailure(
+            const CloudSyncException(
+              kind: CloudSyncFailureKind.unauthenticated,
+              retryable: false,
+            ),
+            StackTrace.current,
+          ),
+        );
       }
 
       await keyLease.close();
@@ -585,6 +604,7 @@ final class E2eeChatContentRuntime
       _requireStillInitializing();
       _state = E2eeChatContentRuntimeState.ready;
       scheduler?.start();
+      _realtimeListener?.start();
     } catch (error, stackTrace) {
       if (unownedArk != null) {
         try {
@@ -1534,6 +1554,11 @@ final class E2eeChatContentRuntime
       await cleanup.run('等待 E2EE 同步周期结束', () => schedulerClose);
       if (cleanup.lastStepSucceeded) _scheduler = null;
     }
+    final realtimeClose = _realtimeListener?.close();
+    if (realtimeClose != null) {
+      await cleanup.run('关闭 E2EE 实时同步监听', () => realtimeClose);
+      if (cleanup.lastStepSucceeded) _realtimeListener = null;
+    }
     final singleCycle = _activeSingleCycle;
     if (singleCycle != null) {
       try {
@@ -1563,6 +1588,11 @@ final class E2eeChatContentRuntime
     if (scheduler != null) {
       await cleanup.run('关闭初始化失败的 E2EE 同步调度器', scheduler.close);
       if (cleanup.lastStepSucceeded) _scheduler = null;
+    }
+    final realtime = _realtimeListener;
+    if (realtime != null) {
+      await cleanup.run('关闭初始化失败的 E2EE 实时同步监听', realtime.close);
+      if (cleanup.lastStepSucceeded) _realtimeListener = null;
     }
     cleanup.runSync('关闭初始化失败的 E2EE 网络客户端', () {
       _client.close(force: true);
