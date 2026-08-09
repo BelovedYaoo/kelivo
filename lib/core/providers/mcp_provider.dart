@@ -311,6 +311,7 @@ class McpProvider extends ChangeNotifier with BatchedChangeNotifier {
   late final Future<void> ready;
   final SyncWriteExecutor _syncWrites;
   final KelivoSecureCore? _secureCore;
+  Future<void> _localSlotLock = Future<void>.value();
 
   McpProvider({
     required SyncWriteExecutor syncWriteExecutor,
@@ -357,11 +358,22 @@ class McpProvider extends ChangeNotifier with BatchedChangeNotifier {
 
   Future<KelivoKeyHandle> _openOrCreateLocalSlot() async {
     final core = _secureCore!;
+    // 串行化本地槽创建：并发连接多个本地服务器时（_load 自动连接 +
+    // addServer/refreshTools 持久化）会同时 createSlot 同一槽位，原生侧
+    // 槽状态机不支持并发创建（internalState）。
+    final previous = _localSlotLock;
+    final done = Completer<void>();
+    _localSlotLock = done.future;
+    await previous;
     try {
-      return await core.createSlot(_localSlotId);
-    } on KelivoSecureCoreException catch (error) {
-      if (error.status != KelivoSecureCoreStatus.slotAlreadyExists) rethrow;
-      return await core.openSlot(_localSlotId);
+      try {
+        return await core.createSlot(_localSlotId);
+      } on KelivoSecureCoreException catch (error) {
+        if (error.status != KelivoSecureCoreStatus.slotAlreadyExists) rethrow;
+        return await core.openSlot(_localSlotId);
+      }
+    } finally {
+      done.complete();
     }
   }
 
