@@ -3,6 +3,8 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
+import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
+import 'package:shared_preferences_platform_interface/types.dart';
 
 import 'e2ee_self_revocation_rotation_binding.dart';
 
@@ -13,6 +15,9 @@ typedef CloudSyncJsonMap = Map<String, Object?>;
 
 const defaultCloudSyncBaseUrl = 'https://kelivo.bemylover.top';
 
+const cloudSyncBaseUrlPreferenceKey = 'cloud_sync_base_url_override';
+const _defaultSharedPreferencesPrefix = 'flutter.';
+
 /// 自托管服务器地址覆盖（空 = 使用 Cloudflare 默认）。设置页切换后更新，
 /// 登录/恢复/注册与既有会话校验统一走 [activeCloudSyncBaseUrl]。
 String cloudSyncBaseUrlOverride = '';
@@ -21,8 +26,31 @@ String get activeCloudSyncBaseUrl {
   return trimmed.isEmpty ? defaultCloudSyncBaseUrl : trimmed;
 }
 
+Future<String> loadCloudSyncBaseUrlOverrideBeforeWorkspaceBootstrap({
+  SharedPreferencesStorePlatform? store,
+}) async {
+  // 账号工作区会在启动中途切换 SharedPreferences 前缀；这里必须绕过
+  // legacy getInstance，否则后续 setPrefix 会使整个启动流程失败。
+  const rawKey =
+      '$_defaultSharedPreferencesPrefix$cloudSyncBaseUrlPreferenceKey';
+  final values = await (store ?? SharedPreferencesStorePlatform.instance)
+      .getAllWithParameters(
+        GetAllParameters(
+          filter: PreferencesFilter(
+            prefix: rawKey,
+            allowList: <String>{rawKey},
+          ),
+        ),
+      );
+  return switch (values[rawKey]) {
+    null => '',
+    final String value => value,
+    _ => throw StateError('cloud_sync_base_url_override_type'),
+  };
+}
+
 /// 阿里云自托管服务器（武汉，无需梯子）。
-const aliyunCloudSyncBaseUrl = 'https://belovedyaoo.top';
+const aliyunCloudSyncBaseUrl = 'https://kelivo.belovedyaoo.top';
 
 const maximumCloudSyncAttachmentSizeBytes = 100 * 1024 * 1024;
 const cloudSyncOpaqueProtocolVersion = 1;

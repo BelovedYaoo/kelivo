@@ -164,6 +164,55 @@ void main() {
     await expectLater(bootstrap(), throwsA(isA<FormatException>()));
   }
 
+  test('未保存服务器选择时启动前读取不锁定工作区偏好前缀', () async {
+    expect(
+      await loadCloudSyncBaseUrlOverrideBeforeWorkspaceBootstrap(),
+      isEmpty,
+    );
+
+    final runtime = await bootstrap();
+    expect(runtime.current.isLocal, isTrue);
+    expect(runtime.current.preferencesPrefix, 'flutter.');
+  });
+
+  test('启动前读取服务器选择后仍可安装工作区偏好前缀', () async {
+    const rawKey = 'flutter.$cloudSyncBaseUrlPreferenceKey';
+    await SharedPreferencesStorePlatform.instance.setValue(
+      'String',
+      rawKey,
+      aliyunCloudSyncBaseUrl,
+    );
+
+    expect(
+      await loadCloudSyncBaseUrlOverrideBeforeWorkspaceBootstrap(),
+      aliyunCloudSyncBaseUrl,
+    );
+    final runtime = await bootstrap();
+    final preferences = await SharedPreferences.getInstance();
+
+    expect(runtime.current.isLocal, isTrue);
+    expect(
+      preferences.getString(cloudSyncBaseUrlPreferenceKey),
+      aliyunCloudSyncBaseUrl,
+    );
+  });
+
+  test('启动前服务器选择类型损坏时显式失败', () async {
+    const rawKey = 'flutter.$cloudSyncBaseUrlPreferenceKey';
+    await SharedPreferencesStorePlatform.instance.setValue('Int', rawKey, 1);
+
+    await expectLater(
+      loadCloudSyncBaseUrlOverrideBeforeWorkspaceBootstrap(),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'cloud_sync_base_url_override_type',
+        ),
+      ),
+    );
+  });
+
   test('枚举匿名当前账号及已登出无会话工作区的精确偏好前缀', () async {
     final signedOutSession = _session(
       userId: 'signed-out-account',

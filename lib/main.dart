@@ -86,7 +86,6 @@ import 'dart:io'
 import 'core/services/android_background.dart';
 import 'core/services/notification_service.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:kelivo_durable_preferences/kelivo_durable_preferences.dart';
 import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 
@@ -166,10 +165,6 @@ Future<void> main() async {
     () async {
       WidgetsFlutterBinding.ensureInitialized();
       staticUnhandledErrorBoundary.install();
-      // 恢复自托管服务器地址选择（本地偏好，不参与同步）。
-      final baseUrlPrefs = await SharedPreferences.getInstance();
-      cloudSyncBaseUrlOverride =
-          baseUrlPrefs.getString('cloud_sync_base_url_override') ?? '';
       late final E2eeMobileBackgroundSyncScheduler
       mobileBackgroundSyncScheduler;
       const secureCore = KelivoSecureCore();
@@ -178,6 +173,10 @@ Future<void> main() async {
       late final KelivoInstallationRootSession installationRootSession;
       try {
         await KelivoDurablePreferences.registerForCurrentPlatform();
+        // 服务器选择存于匿名工作区，但账号工作区尚未确定偏好前缀；
+        // 直接读取平台存储，避免提前创建 legacy SharedPreferences 单例。
+        cloudSyncBaseUrlOverride =
+            await loadCloudSyncBaseUrlOverrideBeforeWorkspaceBootstrap();
         mobileBackgroundSyncScheduler =
             E2eeMobileBackgroundSyncScheduler.forCurrentPlatform();
         installationRoot = await AppDirectories.getInstallationRootDirectory();

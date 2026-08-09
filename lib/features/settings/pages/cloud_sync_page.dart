@@ -398,10 +398,10 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
     final prefs = await SharedPreferences.getInstance();
     if (normalized == defaultCloudSyncBaseUrl) {
       cloudSyncBaseUrlOverride = "";
-      await prefs.remove("cloud_sync_base_url_override");
+      await prefs.remove(cloudSyncBaseUrlPreferenceKey);
     } else {
       cloudSyncBaseUrlOverride = normalized;
-      await prefs.setString("cloud_sync_base_url_override", normalized);
+      await prefs.setString(cloudSyncBaseUrlPreferenceKey, normalized);
     }
     if (!context.mounted) return;
     ScaffoldMessenger.of(
