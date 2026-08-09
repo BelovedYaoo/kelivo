@@ -6036,6 +6036,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get ttsServicesSectionTitle => '文字转语音';
+
+  @override
+  String get syncConflictOverwriteNotice => '你的修改已被其他设备覆盖';
 }
 
 /// The translations for Chinese, using the Han script (`zh_Hans`).
@@ -12070,6 +12073,9 @@ class AppLocalizationsZhHans extends AppLocalizationsZh {
 
   @override
   String get ttsServicesSectionTitle => '文字转语音';
+
+  @override
+  String get syncConflictOverwriteNotice => '你的修改已被其他设备覆盖';
 }
 
 /// The translations for Chinese, using the Han script (`zh_Hant`).
@@ -18105,4 +18111,7 @@ class AppLocalizationsZhHant extends AppLocalizationsZh {
 
   @override
   String get ttsServicesSectionTitle => '文字轉語音';
+
+  @override
+  String get syncConflictOverwriteNotice => '你的修改已被其他裝置覆蓋';
 }

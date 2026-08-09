@@ -108,6 +108,7 @@ final class E2eeChatContentRuntime
     DateTime Function() utcNow = _defaultUtcNow,
     E2eeChatSecurityMaintenance? securityMaintenance,
     E2eeSyncSecurityStateChangedHandler? onSecurityStateChanged,
+    void Function(int conflictedCount)? onSyncConflict,
     @visibleForTesting
     E2eeAttachmentUploadWorkScanner attachmentWorkScanner =
         _defaultAttachmentUploadWorkScanner,
@@ -123,6 +124,7 @@ final class E2eeChatContentRuntime
     attachmentWorkScanner: attachmentWorkScanner,
     securityMaintenance: securityMaintenance,
     onSecurityStateChanged: onSecurityStateChanged,
+    onSyncConflict: onSyncConflict,
     mode: E2eeChatContentRuntimeMode.continuous,
   );
 
@@ -152,6 +154,7 @@ final class E2eeChatContentRuntime
       attachmentWorkScanner: attachmentWorkScanner,
       securityMaintenance: securityMaintenance,
       onSecurityStateChanged: null,
+      onSyncConflict: null,
       mode: E2eeChatContentRuntimeMode.singleCycle,
     );
     runtime.bindChatService(
@@ -173,6 +176,7 @@ final class E2eeChatContentRuntime
     required this._attachmentWorkScanner,
     required this._securityMaintenance,
     required this._onSecurityStateChanged,
+    required this._onSyncConflict,
     required this._mode,
   }) : _session = session,
        _databaseFile = databaseFile.absolute,
@@ -193,6 +197,7 @@ final class E2eeChatContentRuntime
   final E2eeAttachmentUploadWorkScanner _attachmentWorkScanner;
   final E2eeChatSecurityMaintenance? _securityMaintenance;
   final E2eeSyncSecurityStateChangedHandler? _onSecurityStateChanged;
+  final void Function(int conflictedCount)? _onSyncConflict;
   final E2eeChatContentRuntimeMode _mode;
 
   E2eeChatContentRuntimeState _state = E2eeChatContentRuntimeState.created;
@@ -552,12 +557,17 @@ final class E2eeChatContentRuntime
               },
             ),
           ),
-          flushOnce: () => runBudgeted<E2eeSyncFlushReport>(
-            () => outbox.flushOnce(
+          flushOnce: () => runBudgeted<E2eeSyncFlushReport>(() async {
+            final report = await outbox.flushOnce(
               transport: transports.records,
               executionBudget: executionBudget,
-            ),
-          ),
+            );
+            final conflicted = report.conflicted;
+            if (conflicted > 0) {
+              _onSyncConflict?.call(conflicted);
+            }
+            return report;
+          }),
         );
       }
 

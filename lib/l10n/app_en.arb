@@ -2691,5 +2691,6 @@
       }
     }
   },
-  "ttsServicesSectionTitle": "Text-to-Speech"
+  "ttsServicesSectionTitle": "Text-to-Speech",
+  "syncConflictOverwriteNotice": "Your change has been overwritten by another device"
 }

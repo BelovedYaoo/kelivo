@@ -2667,5 +2667,6 @@
       }
     }
   },
-  "ttsServicesSectionTitle": "文字轉語音"
+  "ttsServicesSectionTitle": "文字轉語音",
+  "syncConflictOverwriteNotice": "你的修改已被其他裝置覆蓋"
 }

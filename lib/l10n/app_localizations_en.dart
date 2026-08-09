@@ -6302,4 +6302,8 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get ttsServicesSectionTitle => 'Text-to-Speech';
+
+  @override
+  String get syncConflictOverwriteNotice =>
+      'Your change has been overwritten by another device';
 }

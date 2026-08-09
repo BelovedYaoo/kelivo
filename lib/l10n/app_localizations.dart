@@ -11527,6 +11527,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Text-to-Speech'**
   String get ttsServicesSectionTitle;
+
+  /// No description provided for @syncConflictOverwriteNotice.
+  ///
+  /// In en, this message translates to:
+  /// **'Your change has been overwritten by another device'**
+  String get syncConflictOverwriteNotice;
 }
 
 class _AppLocalizationsDelegate

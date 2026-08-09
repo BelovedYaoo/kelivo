@@ -98,6 +98,14 @@ bool _didInitializeLocalizedDefaults = false;
 E2eeAccountRecoveryRunner? _pendingRestartedAccountRecoveryRunner;
 CloudSyncClient? _pendingRestartedAccountRecoveryClient;
 
+/// 全局 SnackBar 通道：实时同步冲突（本地修改被其他设备覆盖）提示经
+/// [syncConflictCount] 通知，由主 MaterialApp 的 ValueListenableBuilder
+/// 消费后经此 key 弹出。
+final GlobalKey<ScaffoldMessengerState> rootScaffoldMessengerKey =
+    GlobalKey<ScaffoldMessengerState>();
+final ValueNotifier<int> syncConflictCount = ValueNotifier<int>(0);
+int _lastShownSyncConflict = 0;
+
 final class AssistantDefaultsBootstrap {
   AssistantDefaultsBootstrap({this.retryDelay = const Duration(seconds: 2)})
     : assert(!retryDelay.isNegative);
@@ -457,6 +465,10 @@ _E2eeRuntimeComposition? _createE2eeRuntimeComposition({
           : E2eeSyncSecurityMaintenanceDisposition.continueSync;
     },
     onSecurityStateChanged: PlatformUtils.restartApp,
+    onSyncConflict: (conflictedCount) {
+      // 本地未同步修改被远端覆盖：累加计数触发全局提示。
+      syncConflictCount.value += conflictedCount;
+    },
   );
   return _E2eeRuntimeComposition(
     contentRuntime: contentRuntime,
@@ -796,11 +808,10 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => McpToolService()),
         ChangeNotifierProvider(
           lazy: false,
-          create: (_) =>
-              McpProvider(
-                syncWriteExecutor: configSyncWriteExecutor,
-                secureCore: const KelivoSecureCore(),
-              ),
+          create: (_) => McpProvider(
+            syncWriteExecutor: configSyncWriteExecutor,
+            secureCore: const KelivoSecureCore(),
+          ),
         ),
         ChangeNotifierProvider(create: (_) => ToolApprovalService()),
         ChangeNotifierProvider(create: (_) => AskUserInteractionService()),
@@ -1131,6 +1142,7 @@ class MyApp extends StatelessWidget {
               return MaterialApp(
                 debugShowCheckedModeBanner: false,
                 title: 'Olivia',
+                scaffoldMessengerKey: rootScaffoldMessengerKey,
                 // App UI language; null = follow system (respects iOS per-app language)
                 locale: settings.appLocaleForMaterialApp,
                 supportedLocales: AppLocalizations.supportedLocales,
@@ -1235,12 +1247,33 @@ class MyApp extends StatelessWidget {
                         );
                   return AnnotatedRegion<SystemUiOverlayStyle>(
                     value: overlay,
-                    child: effectiveAppFont == null
-                        ? appWithOverlays
-                        : DefaultTextStyle.merge(
-                            style: TextStyle(fontFamily: effectiveAppFont),
-                            child: appWithOverlays,
-                          ),
+                    child: ValueListenableBuilder<int>(
+                      valueListenable: syncConflictCount,
+                      builder: (context, value, _) {
+                        if (value > _lastShownSyncConflict) {
+                          _lastShownSyncConflict = value;
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            final messenger =
+                                rootScaffoldMessengerKey.currentState;
+                            messenger?.showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  AppLocalizations.of(
+                                    context,
+                                  )!.syncConflictOverwriteNotice,
+                                ),
+                              ),
+                            );
+                          });
+                        }
+                        return effectiveAppFont == null
+                            ? appWithOverlays
+                            : DefaultTextStyle.merge(
+                                style: TextStyle(fontFamily: effectiveAppFont),
+                                child: appWithOverlays,
+                              );
+                      },
+                    ),
                   );
                 },
               );
