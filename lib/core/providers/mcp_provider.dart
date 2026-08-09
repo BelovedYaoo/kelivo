@@ -248,6 +248,25 @@ class McpServerConfig {
   }
 }
 
+class _Cooldown {
+  final DateTime startedAt;
+  final DateTime until;
+
+  const _Cooldown({required this.startedAt, required this.until});
+}
+
+/// Per-server connection state for remote MCP session reuse.
+class _ServerConnection {
+  mcp.Client? client;
+  Future<bool>? connectFuture;
+  int generation = 0;
+  _Cooldown? cooldown;
+  Future<void>? refreshFuture;
+  bool refreshDirty = false;
+}
+
+enum _ToolRefreshOutcome { success, sessionExpired, failed }
+
 class McpProvider extends ChangeNotifier with BatchedChangeNotifier {
   static const String _prefsKey = 'mcp_servers_v1';
   static const String _localServersPrefsKey = 'mcp_local_servers_v1';
@@ -257,7 +276,10 @@ class McpProvider extends ChangeNotifier with BatchedChangeNotifier {
   // 存储时用设备安全槽密封；未注入 secure core（仅测试）时保持明文以便隔离。
   static const String _encryptedStoragePrefix = 'kelivo-mcp-v1:';
   static final Uint8List _localSlotId = Uint8List.fromList(
-    sha256.convert(utf8.encode('kelivo-mcp-local-servers')).bytes.sublist(0, 16),
+    sha256
+        .convert(utf8.encode('kelivo-mcp-local-servers'))
+        .bytes
+        .sublist(0, 16),
   );
   static final Uint8List _localRecordId = Uint8List.fromList(
     sha256
@@ -270,14 +292,19 @@ class McpProvider extends ChangeNotifier with BatchedChangeNotifier {
   );
   static const int _localRecordEpoch = 1;
 
-  final Map<String, mcp.Client> _clients = {};
   final Map<String, McpStatus> _status = {}; // id -> status
   final Map<String, String> _errors = {}; // id -> last error
   List<McpServerConfig> _servers = [];
+  bool _disposed = false;
   // Reconnect bookkeeping to avoid duplicate concurrent retries
   final Set<String> _reconnecting = <String>{};
   // Heartbeat timers for live-connection health checks
   final Map<String, Timer> _heartbeats = <String, Timer>{};
+  // Session-reuse bookkeeping: one entry per server id, carrying the
+  // connected client, connect de-duplication, generation and failure
+  // cooldown so remote MCP sessions are reused instead of re-initialized.
+  final Map<String, _ServerConnection> _connections =
+      <String, _ServerConnection>{};
   Duration _requestTimeout = const Duration(seconds: 30);
   final McpStdioCommandResolver _stdioCommandResolver =
       McpStdioCommandResolver();
@@ -310,7 +337,9 @@ class McpProvider extends ChangeNotifier with BatchedChangeNotifier {
       return null;
     }
     try {
-      final envelope = base64Decode(raw.substring(_encryptedStoragePrefix.length));
+      final envelope = base64Decode(
+        raw.substring(_encryptedStoragePrefix.length),
+      );
       final plaintext = await core.openRecord(
         handle,
         recordId: _localRecordId,
@@ -389,7 +418,7 @@ class McpProvider extends ChangeNotifier with BatchedChangeNotifier {
   String? errorFor(String id) => _errors[id];
   bool get hasAnyEnabled => _servers.any((s) => s.enabled);
   bool isConnected(String id) =>
-      _clients.containsKey(id) && statusFor(id) == McpStatus.connected;
+      _connections.containsKey(id) && statusFor(id) == McpStatus.connected;
   List<McpServerConfig> get connectedServers => _servers
       .where((s) => statusFor(s.id) == McpStatus.connected)
       .toList(growable: false);
@@ -886,7 +915,8 @@ class McpProvider extends ChangeNotifier with BatchedChangeNotifier {
   }
 
   void _disconnectClientWithoutNotification(String id) {
-    final client = _clients.remove(id);
+    final state = _connections.remove(id);
+    final client = state?.client;
     try {
       client?.disconnect();
     } catch (_) {}
@@ -979,22 +1009,76 @@ class McpProvider extends ChangeNotifier with BatchedChangeNotifier {
   }
 
   Future<void> connect(String id) async {
+    await _connect(id);
+  }
+
+  Future<bool> _connect(String id) {
     final server = _servers.firstWhere(
       (e) => e.id == id,
       orElse: () => throw StateError('Server not found'),
     );
-    // If already connected, try a ping by listing tools quickly; else return
-    if (_clients.containsKey(id)) {
-      // Already connected; update status just in case
+    if (!server.enabled || _disposed) {
+      return Future<bool>.value(false);
+    }
+    final state = _connections.putIfAbsent(id, _ServerConnection.new);
+    final active = state.connectFuture;
+    if (active != null) return active;
+    if (_activeCooldown(state) != null) return Future<bool>.value(false);
+    if (state.client?.isConnected == true) {
+      // Reuse the live remote session; just re-verify tool availability.
       _status[id] = McpStatus.connected;
       _errors.remove(id);
       notifyListeners();
-      return;
+      unawaited(refreshTools(id));
+      return Future<bool>.value(true);
     }
+    return _beginConnect(id, server, state);
+  }
+
+  Future<bool> _beginConnect(
+    String id,
+    McpServerConfig server,
+    _ServerConnection state, {
+    Future<bool>? waitFor,
+  }) {
     _status[id] = McpStatus.connecting;
     _errors.remove(id);
+    final generation = state.generation;
     notifyListeners();
+    late final Future<bool> future;
+    future =
+        (() async {
+          if (waitFor != null) {
+            try {
+              await waitFor;
+            } catch (_) {}
+          }
+          if (_disposed ||
+              state.generation != generation ||
+              _servers.any((s) => s.id == id && !s.enabled)) {
+            return false;
+          }
+          return _performConnect(id, server, state, generation);
+        })().whenComplete(() {
+          if (identical(state.connectFuture, future)) {
+            state.connectFuture = null;
+          }
+        });
+    state.connectFuture = future;
+    return future.then((connected) {
+      if (connected && !_disposed) unawaited(refreshTools(id));
+      return connected;
+    });
+  }
 
+  Future<bool> _performConnect(
+    String id,
+    McpServerConfig server,
+    _ServerConnection state,
+    int generation,
+  ) async {
+    mcp.Client? client;
+    final startedAt = DateTime.now();
     try {
       final clientConfig = mcp.McpClient.simpleConfig(
         name: 'Kelivo MCP',
@@ -1004,84 +1088,227 @@ class McpProvider extends ChangeNotifier with BatchedChangeNotifier {
         requestTimeout: _requestTimeout,
       );
 
-      // In-memory builtin server path
       if (server.transport == McpTransportType.inmemory) {
         final engine = KelivoFetchMcpServerEngine();
         final transport = KelivoInMemoryClientTransport(engine);
-        final client = mcp.McpClient.createClient(clientConfig);
+        client = mcp.McpClient.createClient(clientConfig);
         await client.connect(transport);
-        _clients[id] = client;
-        _status[id] = McpStatus.connected;
-        _errors.remove(id);
-        notifyListeners();
-        await refreshTools(id);
-        _startHeartbeat(id);
-        return;
-      }
-
-      final mergedHeaders = <String, String>{...server.headers};
-      final transportConfig = await () async {
-        if (server.transport == McpTransportType.sse) {
-          return mcp.TransportConfig.sse(
-            serverUrl: server.url,
-            headers: mergedHeaders.isEmpty ? null : mergedHeaders,
-          );
-        } else if (server.transport == McpTransportType.http) {
-          return mcp.TransportConfig.streamableHttp(
-            baseUrl: server.url,
-            headers: mergedHeaders.isEmpty ? null : mergedHeaders,
-            timeout: _requestTimeout,
-          );
-        } else {
-          // STDIO; only supported on desktop
-          if (!_isDesktopPlatform()) {
-            throw StateError('STDIO transport not supported on this platform');
-          }
-          final cmd = server.command;
-          if (cmd == null || cmd.isEmpty) {
-            throw StateError('STDIO command is empty');
-          }
-          final mergedEnv = await _stdioCommandResolver
-              .resolveEnvironmentWithPath(server.env);
-          final commandExists = await _stdioCommandResolver.commandExists(
-            cmd,
-            mergedEnv,
-          );
-          if (!commandExists) {
-            throw StateError(
-              'Command "$cmd" not found in PATH. '
-              'Ensure the command is installed and accessible.',
+      } else {
+        final mergedHeaders = <String, String>{...server.headers};
+        final transportConfig = await () async {
+          if (server.transport == McpTransportType.sse) {
+            return mcp.TransportConfig.sse(
+              serverUrl: server.url,
+              headers: mergedHeaders.isEmpty ? null : mergedHeaders,
+            );
+          } else if (server.transport == McpTransportType.http) {
+            return mcp.TransportConfig.streamableHttp(
+              baseUrl: server.url,
+              headers: mergedHeaders.isEmpty ? null : mergedHeaders,
+              timeout: _requestTimeout,
+            );
+          } else {
+            // STDIO; only supported on desktop
+            if (!_isDesktopPlatform()) {
+              throw StateError(
+                'STDIO transport not supported on this platform',
+              );
+            }
+            final cmd = server.command;
+            if (cmd == null || cmd.isEmpty) {
+              throw StateError('STDIO command is empty');
+            }
+            final mergedEnv = await _stdioCommandResolver
+                .resolveEnvironmentWithPath(server.env);
+            final commandExists = await _stdioCommandResolver.commandExists(
+              cmd,
+              mergedEnv,
+            );
+            if (!commandExists) {
+              throw StateError(
+                'Command "$cmd" not found in PATH. '
+                'Ensure the command is installed and accessible.',
+              );
+            }
+            return mcp.TransportConfig.stdio(
+              command: cmd,
+              arguments: server.args,
+              workingDirectory: server.workingDirectory,
+              environment: mergedEnv.isEmpty ? null : mergedEnv,
             );
           }
-          return mcp.TransportConfig.stdio(
-            command: cmd,
-            arguments: server.args,
-            workingDirectory: server.workingDirectory,
-            environment: mergedEnv.isEmpty ? null : mergedEnv,
-          );
-        }
-      }();
+        }();
 
-      final clientResult = await mcp.McpClient.createAndConnect(
-        config: clientConfig,
-        transportConfig: transportConfig,
-      );
+        final clientResult = await mcp.McpClient.createAndConnect(
+          config: clientConfig,
+          transportConfig: transportConfig,
+        );
 
-      final client = clientResult.fold((c) => c, (err) => throw err);
-      _clients[id] = client;
+        client = clientResult.fold((c) => c, (err) => throw err);
+      }
+
+      final connectedClient = client;
+      if (connectedClient == null) {
+        throw StateError('client_connect_failed');
+      }
+      if (_disposed ||
+          state.generation != generation ||
+          _servers.any((s) => s.id == id && !s.enabled)) {
+        await connectedClient.terminateSession();
+        connectedClient.dispose();
+        return false;
+      }
+      state.client = connectedClient;
       _status[id] = McpStatus.connected;
       _errors.remove(id);
+      _clearCooldownAfterSuccess(state, startedAt);
+      _attachClient(id, state, connectedClient, generation);
       notifyListeners();
-
-      // Try to refresh tools once connected
-      await refreshTools(id);
 
       // Start/refresh heartbeat for this connection
       _startHeartbeat(id);
-    } catch (e) {
+      return true;
+    } catch (error) {
+      client?.dispose();
+      if (_disposed || state.generation != generation) return false;
+      if (error is mcp.McpHttpError && _requiresCooldown(error)) {
+        _enterCooldown(state, error.retryAfter);
+      } else if (error is mcp.McpHttpError &&
+          (error.statusCode == 401 || error.statusCode == 403)) {
+        _enterCooldown(state, const Duration(minutes: 5));
+      }
       _status[id] = McpStatus.error;
-      _errors[id] = e.toString();
+      _errors[id] = error.toString();
       notifyListeners();
+      return false;
+    }
+  }
+
+  void _attachClient(
+    String id,
+    _ServerConnection state,
+    mcp.Client client,
+    int generation,
+  ) {
+    client.onDisconnect.listen((_) {
+      if (_disposed ||
+          state.generation != generation ||
+          !identical(state.client, client)) {
+        return;
+      }
+      state.client = null;
+      _status[id] = McpStatus.idle;
+      _errors.remove(id);
+      notifyListeners();
+    });
+    client.onError.listen((error) {
+      if (_disposed ||
+          state.generation != generation ||
+          !identical(state.client, client)) {
+        return;
+      }
+      if (error is mcp.McpHttpError &&
+          error.isBackgroundRequest &&
+          error.statusCode == 404 &&
+          error.sessionIdPresent) {
+        unawaited(_recoverExpiredSession(id, state, client));
+      } else if (error is mcp.McpHttpError && _requiresCooldown(error)) {
+        _enterCooldown(state, error.retryAfter);
+        notifyListeners();
+      } else if (error is mcp.McpHttpError &&
+          (error.statusCode == 401 || error.statusCode == 403)) {
+        _enterCooldown(state, const Duration(minutes: 5));
+        notifyListeners();
+      }
+    });
+    client.onToolsListChanged(() {
+      if (_disposed ||
+          state.generation != generation ||
+          !identical(state.client, client)) {
+        return;
+      }
+      unawaited(refreshTools(id));
+    });
+  }
+
+  _Cooldown? _activeCooldown(_ServerConnection? state) {
+    final cooldown = state?.cooldown;
+    if (cooldown == null) return null;
+    final now = DateTime.now();
+    if (now.isAfter(cooldown.until)) {
+      state!.cooldown = null;
+      return null;
+    }
+    return cooldown;
+  }
+
+  bool isInCooldown(String id) => _activeCooldown(_connections[id]) != null;
+
+  bool _requiresCooldown(mcp.McpHttpError error) {
+    if (error.statusCode == 429 || error.statusCode == 503) return true;
+    if (error.retryAfter != null) return true;
+    return false;
+  }
+
+  void _enterCooldown(_ServerConnection state, Duration? retryAfter) {
+    final now = DateTime.now();
+    final until = now.add(retryAfter ?? const Duration(seconds: 30));
+    state.cooldown = _Cooldown(startedAt: now, until: until);
+  }
+
+  void _clearCooldownAfterSuccess(_ServerConnection state, DateTime startedAt) {
+    final cooldown = state.cooldown;
+    if (cooldown == null) return;
+    if (!cooldown.startedAt.isAfter(startedAt)) {
+      state.cooldown = null;
+    }
+  }
+
+  Future<mcp.Client?> _recoverExpiredSession(
+    String id,
+    _ServerConnection state,
+    mcp.Client failedClient,
+  ) async {
+    if (_disposed || _servers.any((s) => s.id == id && !s.enabled)) {
+      return null;
+    }
+    if (!identical(state.client, failedClient)) {
+      final active = state.connectFuture;
+      if (active != null) {
+        try {
+          await active;
+        } catch (_) {}
+      }
+      final current = state.client;
+      return current?.isConnected == true ? current : null;
+    }
+
+    final previousConnect = state.connectFuture;
+    state.generation++;
+    state.client = null;
+    _status[id] = McpStatus.connecting;
+    _errors.remove(id);
+    state.cooldown = null;
+
+    final server = _servers.firstWhere(
+      (e) => e.id == id,
+      orElse: () => throw StateError('Server not found'),
+    );
+    if (!server.enabled || _disposed) {
+      failedClient.dispose();
+      return null;
+    }
+    try {
+      final connected = await _beginConnect(
+        id,
+        server,
+        state,
+        waitFor: previousConnect,
+      );
+      await failedClient.waitForPendingRequests();
+      return connected ? state.client : null;
+    } finally {
+      failedClient.dispose();
     }
   }
 
@@ -1112,27 +1339,43 @@ class McpProvider extends ChangeNotifier with BatchedChangeNotifier {
     await _persistTimeout();
     notifyListeners();
     if (!reconnectActive) return;
-    for (final id in _clients.keys.toList()) {
+    for (final id in _connections.keys.toList()) {
       if (_servers.any((server) => server.id == id && server.enabled)) {
         unawaited(reconnect(id));
       }
     }
   }
 
-  Future<void> disconnect(String id) async {
-    final client = _clients.remove(id);
-    try {
-      client?.disconnect();
-    } catch (_) {}
+  Future<void> disconnect(String id, {bool terminateSession = true}) async {
+    final state = _connections.putIfAbsent(id, _ServerConnection.new);
+    state.generation++;
+    final active = state.connectFuture;
+    final client = state.client;
+    state.client = null;
+    state.cooldown = null;
+    state.refreshDirty = false;
     _status[id] = McpStatus.idle;
     _errors.remove(id);
     _stopHeartbeat(id);
     notifyListeners();
+
+    if (active != null) {
+      try {
+        await active;
+      } catch (_) {}
+    }
+    try {
+      if (terminateSession) {
+        await client?.terminateSession();
+      }
+      client?.dispose();
+    } catch (_) {}
   }
 
-  Future<void> reconnect(String id) async {
-    await disconnect(id);
-    await connect(id);
+  Future<bool> reconnect(String id) async {
+    if (_activeCooldown(_connections[id]) != null) return false;
+    await disconnect(id, terminateSession: true);
+    return _connect(id);
   }
 
   Future<void> _reconnectWithBackoff(String id, {int maxAttempts = 3}) async {
@@ -1159,7 +1402,7 @@ class McpProvider extends ChangeNotifier with BatchedChangeNotifier {
     _heartbeats[id] = Timer.periodic(interval, (t) async {
       // Heartbeat only when we think we're connected
       if (!isConnected(id)) return;
-      final client = _clients[id];
+      final client = _connections[id]?.client;
       if (client == null) return;
       try {
         // A lightweight call to verify liveness
@@ -1472,17 +1715,77 @@ class McpProvider extends ChangeNotifier with BatchedChangeNotifier {
   }
 
   Future<void> refreshTools(String id) async {
-    final client = _clients[id];
+    final state = _connections[id];
+    final client = state?.client;
     if (client == null) return;
+    state!.refreshDirty = true;
+    final active = state.refreshFuture;
+    if (active != null) return;
+    final future = _drainToolRefresh(id, state);
+    state.refreshFuture = future;
+    await future.whenComplete(() {
+      if (!identical(state.refreshFuture, future)) return;
+      state.refreshFuture = null;
+      if (state.refreshDirty && !_disposed) {
+        unawaited(refreshTools(id));
+      }
+    });
+  }
+
+  Future<void> _drainToolRefresh(String id, _ServerConnection state) async {
+    var sessionRecoveries = 0;
+    while (state.refreshDirty && !_disposed) {
+      state.refreshDirty = false;
+      final failedClient = state.client;
+      final outcome = await _refreshToolsOnce(id, state);
+      if (outcome == _ToolRefreshOutcome.sessionExpired &&
+          sessionRecoveries++ == 0 &&
+          failedClient != null &&
+          await _recoverExpiredSession(id, state, failedClient) != null) {
+        state.refreshDirty = true;
+        continue;
+      }
+      if (outcome != _ToolRefreshOutcome.success) return;
+    }
+  }
+
+  bool _isRejectedSession(Object error) =>
+      error is mcp.McpHttpError &&
+      error.statusCode == 404 &&
+      error.sessionIdPresent &&
+      error.canRetryRequest;
+
+  Future<_ToolRefreshOutcome> _refreshToolsOnce(
+    String id,
+    _ServerConnection state,
+  ) async {
+    final client = state.client;
+    if (client == null) return _ToolRefreshOutcome.failed;
+    final generation = state.generation;
     final List<mcp.Tool> tools;
     try {
       tools = await client.listTools();
-    } catch (_) {
-      return;
+    } catch (error) {
+      if (_disposed || state.generation != generation) {
+        return _ToolRefreshOutcome.failed;
+      }
+      if (_isRejectedSession(error)) return _ToolRefreshOutcome.sessionExpired;
+      if (error is mcp.McpHttpError && _requiresCooldown(error)) {
+        _enterCooldown(state, error.retryAfter);
+      }
+      _status[id] = McpStatus.error;
+      _errors[id] = error.toString();
+      notifyListeners();
+      return _ToolRefreshOutcome.failed;
+    }
+    if (_disposed ||
+        state.generation != generation ||
+        !identical(state.client, client)) {
+      return _ToolRefreshOutcome.failed;
     }
 
     final idx = _servers.indexWhere((server) => server.id == id);
-    if (idx < 0) return;
+    if (idx < 0) return _ToolRefreshOutcome.failed;
     final server = _servers[idx];
     final existingMap = <String, McpToolConfig>{
       for (final tool in server.tools) tool.name: tool,
@@ -1545,7 +1848,7 @@ class McpProvider extends ChangeNotifier with BatchedChangeNotifier {
     final nextJson = jsonEncode(
       merged.map((tool) => tool.toJson()).toList(growable: false),
     );
-    if (previousJson == nextJson) return;
+    if (previousJson == nextJson) return _ToolRefreshOutcome.success;
 
     await _runPortableServerWrite(
       keys: _isPortable(server)
@@ -1559,6 +1862,7 @@ class McpProvider extends ChangeNotifier with BatchedChangeNotifier {
         notifyListeners();
       },
     );
+    return _ToolRefreshOutcome.success;
   }
 
   Future<void> ensureConnected(String id) async {
@@ -1577,7 +1881,7 @@ class McpProvider extends ChangeNotifier with BatchedChangeNotifier {
   ) async {
     try {
       await ensureConnected(serverId);
-      var client = _clients[serverId];
+      var client = _connections[serverId]?.client;
       if (client == null) return null;
       // Normalize arguments based on tool schema (best-effort)
       final normalized = _normalizeArgsForTool(serverId, toolName, args);
@@ -1601,7 +1905,7 @@ class McpProvider extends ChangeNotifier with BatchedChangeNotifier {
       try {
         await _reconnectWithBackoff(serverId, maxAttempts: 3);
         if (!isConnected(serverId)) return null;
-        final client = _clients[serverId];
+        final client = _connections[serverId]?.client;
         if (client == null) return null;
         final normalized = _normalizeArgsForTool(serverId, toolName, args);
         final result = await client.callTool(toolName, normalized);
@@ -1631,11 +1935,18 @@ class McpProvider extends ChangeNotifier with BatchedChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
     // Clean up timers
     for (final t in _heartbeats.values) {
       t.cancel();
     }
     _heartbeats.clear();
+    for (final state in _connections.values) {
+      try {
+        state.client?.dispose();
+      } catch (_) {}
+    }
+    _connections.clear();
     super.dispose();
   }
 
