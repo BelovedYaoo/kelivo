@@ -155,7 +155,10 @@ class _FailingSnapshotRestoreChatService extends ChatService {
     : super(const UntrackedSyncWriteExecutor.forTests());
 
   @override
-  Future<void> restoreDatabaseSnapshot(File snapshotFile) async {
+  Future<void> replaceDatabaseSnapshotFromBackup(
+    File snapshotFile, {
+    production_chat.BackupAttachmentDirectoryMapping? attachmentDirectories,
+  }) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('written_during_restore', 'keep-concurrent-write');
     throw StateError('snapshot restore failed');
@@ -169,7 +172,10 @@ class _RecordingSnapshotPathChatService extends ChatService {
   String? snapshotPath;
 
   @override
-  Future<void> restoreDatabaseSnapshot(File snapshotFile) async {
+  Future<void> replaceDatabaseSnapshotFromBackup(
+    File snapshotFile, {
+    production_chat.BackupAttachmentDirectoryMapping? attachmentDirectories,
+  }) async {
     snapshotPath = snapshotFile.path;
   }
 }
@@ -1703,7 +1709,9 @@ void main() {
       expect(chatService.getConversation(existing.id), isNotNull);
       expect(chatService.getConversation('fixture-conversation'), isNotNull);
       expect(sync.lastMergeReport?.importedConversations, 1);
-      expect(writeExecutor.batches, isEmpty);
+      // merge 补入的新会话生成同步意图批次（#112）；本地已存在会话未被
+      // clobber 由上面的 getConversation 断言覆盖。
+      expect(writeExecutor.batches, isNotEmpty);
       await _expectLegacyCloudSyncStateAbsent(root);
     });
 

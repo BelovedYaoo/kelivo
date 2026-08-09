@@ -2700,14 +2700,14 @@ void main() {
             overwrite: false,
             conversations: const <Conversation>[],
             messages: const <ChatMessage>[],
-            write: () => service.restoreDatabaseSnapshot(snapshot),
+            write: () => service.importPortableChats(snapshot),
           )
           .timeout(const Duration(seconds: 2)),
       throwsA(
         isA<StateError>().having(
           (error) => error.message,
           'message',
-          '数据库快照恢复不得嵌套在另一导入事务内',
+          '便携聊天导入不得嵌套在另一导入事务内',
         ),
       ),
     );
@@ -3077,8 +3077,12 @@ void main() {
     await service.init();
     final snapshot = File('${tempDir.path}/restore-local-only.db');
     await service.createBackupDatabaseSnapshot(snapshot);
+    await ChatDatabaseRepository.prepareSnapshotForRestore(
+      snapshot,
+      cipher: testDatabaseCipher,
+    );
 
-    await service.restoreDatabaseSnapshot(snapshot);
+    await service.replaceDatabaseSnapshotFromBackup(snapshot);
 
     await _expectLegacyCloudSyncStateAbsent(tempDir);
   });

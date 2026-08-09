@@ -5752,18 +5752,6 @@ LIMIT 1;
     });
   }
 
-  Future<void> replaceBackupSnapshot(
-    File snapshotFile, {
-    Future<void> Function()? onBeforeReplace,
-    Future<void> Function()? onReplacedBeforeCommit,
-  }) async {
-    await _importBackupSnapshot(
-      snapshotFile,
-      onBeforeReplace: onBeforeReplace,
-      onReplacedBeforeCommit: onReplacedBeforeCommit,
-    );
-  }
-
   Future<BackupMergeReport> mergeBackupSnapshot(
     File snapshotFile, {
     Future<void> Function(List<String> conversationIds)? onImportedBeforeCommit,
@@ -6247,85 +6235,6 @@ LIMIT 1;
       ],
     );
     if (!replaced) throw StateError('snapshot_attachment_target_changed');
-  }
-
-  Future<void> _importBackupSnapshot(
-    File snapshotFile, {
-    Future<void> Function()? onBeforeReplace,
-    Future<void> Function()? onReplacedBeforeCommit,
-  }) async {
-    if (!await snapshotFile.exists()) {
-      throw FileSystemException(
-        'Snapshot database does not exist',
-        snapshotFile.path,
-      );
-    }
-
-    var attached = false;
-    try {
-      await _db.attachEncryptedDatabase(
-        databaseFile: snapshotFile,
-        databaseName: 'restore_source',
-      );
-      attached = true;
-      await _db.transaction(() async {
-        await onBeforeReplace?.call();
-        await _clearChatRows();
-        for (final table in const [
-          'conversation_rows',
-          'conversation_mcp_server_rows',
-          'turn_rows',
-          'message_rows',
-          'tool_event_rows',
-          'gemini_thought_signature_rows',
-        ]) {
-          await _db.customStatement(
-            'INSERT INTO main.$table '
-            'SELECT * FROM restore_source.$table;',
-          );
-        }
-        final sourceMessageRows = await _db
-            .customSelect(
-              'SELECT id FROM restore_source.message_rows ORDER BY id;',
-            )
-            .get();
-        for (final sourceMessage in sourceMessageRows) {
-          final messageId = sourceMessage.read<String>('id');
-          await _copyAttachedMessageAssets(
-            sourceSchema: 'restore_source',
-            sourceRevisionId: messageId,
-            targetRevisionId: messageId,
-          );
-        }
-        await _writeMigrationCompleteReceipt();
-        final foreignKeyFailures = await _db
-            .customSelect('PRAGMA foreign_key_check;')
-            .get();
-        if (foreignKeyFailures.isNotEmpty) {
-          throw StateError('foreign_key_check');
-        }
-        final sourceConversationCount = await _attachedTableCount(
-          'restore_source',
-          'conversation_rows',
-        );
-        final sourceMessageCount = await _attachedTableCount(
-          'restore_source',
-          'message_rows',
-        );
-        if (await _attachedTableCount('main', 'conversation_rows') !=
-                sourceConversationCount ||
-            await _attachedTableCount('main', 'message_rows') !=
-                sourceMessageCount) {
-          throw StateError('snapshot_import_count');
-        }
-        await onReplacedBeforeCommit?.call();
-        await validateIntegrity();
-      });
-    } finally {
-      if (attached) {
-        await _db.customStatement('DETACH DATABASE restore_source;');
-      }
-    }
   }
 
   Future<int> _attachedTableCount(String schema, String table) async {

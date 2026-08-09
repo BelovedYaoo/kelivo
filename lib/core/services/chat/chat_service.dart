@@ -56,20 +56,6 @@ final class LoadedTimelinePage {
 
 typedef AssetContentHash = Future<String> Function(File file);
 
-/// 在后台 isolate 中准备快照以供恢复；顶层函数保证闭包不捕获实例成员。
-Future<void> _prepareSnapshotForRestoreInBackground(
-  File snapshotFile,
-  DatabaseCipher cipher,
-) async {
-  final snapshotPath = snapshotFile.path;
-  await Isolate.run(
-    () => ChatDatabaseRepository.prepareSnapshotForRestore(
-      File(snapshotPath),
-      cipher: cipher,
-    ),
-  );
-}
-
 typedef BackupAttachmentDirectoryMapping = ({
   Directory uploadDirectory,
   Directory imagesDirectory,
@@ -3232,25 +3218,6 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     );
   }
 
-  Future<void> restoreDatabaseSnapshot(File snapshotFile) async {
-    if (!_initialized) await init();
-    if (identical(Zone.current[_importBatchZoneKey], this) &&
-        _activeRemoteBatchContext == null) {
-      throw StateError('数据库快照恢复不得嵌套在另一导入事务内');
-    }
-    // Isolate.run 闭包不能与捕获 this 的回调闭包共享上下文，否则会被判定为不可发送；
-    // 快照准备放在顶层辅助函数中，避免任何实例成员进入 isolate 消息。
-    await _prepareSnapshotForRestoreInBackground(snapshotFile, databaseCipher);
-    await _repo.replaceBackupSnapshot(
-      snapshotFile,
-      onBeforeReplace: () =>
-          _stagePersistedImportGraph(prepareAttachments: false),
-      onReplacedBeforeCommit: _stagePersistedImportGraph,
-    );
-    await _wakeAfterExternalImportCommit();
-    await _resetAfterOverwriteRestore();
-  }
-
   Future<void> replaceDatabaseSnapshotFromBackup(
     File snapshotFile, {
     BackupAttachmentDirectoryMapping? attachmentDirectories,
@@ -3638,9 +3605,10 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     }
     final report = await _repo.mergeBackupSnapshot(
       snapshotFile,
-      // merge 是本地恢复补漏：不生成同步意图批次，避免把恢复的旧数据
-      // 自动推送到云端（#115）。明确的全量导入走 _stagePersistedImportGraph。
-      onImportedBeforeCommit: null,
+      // merge 补入的新会话走同步意图（#112）：导入数据应推送到云端；
+      // 本地已存在的数据不受影响（repository 按指纹去重合并）。
+      onImportedBeforeCommit: (conversationIds) =>
+          _stagePersistedImportGraph(conversationIds: conversationIds),
     );
     if (report.importedConversations > 0) {
       await _wakeAfterExternalImportCommit();
