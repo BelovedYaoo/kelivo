@@ -3638,8 +3638,9 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     }
     final report = await _repo.mergeBackupSnapshot(
       snapshotFile,
-      onImportedBeforeCommit: (conversationIds) =>
-          _stagePersistedImportGraph(conversationIds: conversationIds),
+      // merge 是本地恢复补漏：不生成同步意图批次，避免把恢复的旧数据
+      // 自动推送到云端（#115）。明确的全量导入走 _stagePersistedImportGraph。
+      onImportedBeforeCommit: null,
     );
     if (report.importedConversations > 0) {
       await _wakeAfterExternalImportCommit();
