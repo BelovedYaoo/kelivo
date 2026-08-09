@@ -4156,6 +4156,73 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     return result;
   }
 
+  Future<GenerationBeginResult> beginAssistantGeneration({
+    required String conversationId,
+    required String modelId,
+    required String providerId,
+    required String anchorGroupId,
+    required bool truncateFuture,
+  }) async {
+    if (!_initialized) await init();
+    if (isTemporaryConversation(conversationId)) {
+      throw StateError('temporary_generation_is_not_persisted');
+    }
+    final conversation = _conversationsCache[conversationId];
+    if (conversation == null) throw StateError('conversation_missing');
+    await _loadMessageOrder(conversationId);
+    final assistantMessage = ChatMessage(
+      role: 'assistant',
+      content: '',
+      conversationId: conversationId,
+      modelId: modelId,
+      providerId: providerId,
+      isStreaming: true,
+    );
+
+    Future<GenerationBeginResult> write() async {
+      final latestConversation = await _repo.getConversation(conversationId);
+      if (latestConversation == null) {
+        throw StateError('conversation_missing');
+      }
+      final result = await _repo.beginAssistantGeneration(
+        conversation: latestConversation,
+        assistantMessage: assistantMessage,
+        anchorGroupId: anchorGroupId,
+        runId: const Uuid().v4(),
+        truncateFuture: truncateFuture,
+      );
+      if (truncateFuture) {
+        _messagesCache.remove(conversationId);
+        _messageOrderIds.remove(conversationId);
+        await _loadMessageOrder(conversationId);
+      }
+      _publishGenerationBegin(result);
+      return result;
+    }
+
+    if (!truncateFuture) return write();
+    final messages = await loadMessagesForSync(conversationId);
+    final anchorIndex = messages.indexWhere(
+      (message) => (message.groupId ?? message.id) == anchorGroupId,
+    );
+    if (anchorIndex < 0) return write();
+    final trailing = messages
+        .skip(anchorIndex + 1)
+        .where((message) => (message.groupId ?? message.id) != anchorGroupId)
+        .toList(growable: false);
+    if (trailing.isEmpty) return write();
+    final keys = <SyncEntityKey>{_conversationKey(conversationId)};
+    for (final message in trailing) {
+      keys
+        ..addAll(_messageGraphKeys(message, includeSelectionWhenPresent: false))
+        ..add(_messageSelectionKey(message.groupId ?? message.id));
+    }
+    return _syncWriteExecutor.runLocalBatch<GenerationBeginResult>(
+      keys: keys,
+      write: write,
+    );
+  }
+
   Future<GenerationBeginResult> beginRegeneration({
     required String conversationId,
     required String modelId,

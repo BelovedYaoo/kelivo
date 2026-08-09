@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/widgets.dart';
+import 'package:uuid/uuid.dart';
 import '../../../core/models/assistant.dart';
 import '../../../core/models/chat_input_data.dart';
 import '../../../core/models/chat_message.dart';
@@ -286,6 +287,33 @@ class MessageGenerationService {
       assistantMessage: result.assistantMessage,
       runId: result.run.id,
     );
+  }
+
+  Future<({ChatMessage assistantMessage, String? runId})>
+  beginAssistantGeneration({
+    required String conversationId,
+    required String modelId,
+    required String providerKey,
+    required String anchorGroupId,
+    required bool truncateFuture,
+  }) async {
+    if (chatService.isTemporaryConversation(conversationId)) {
+      final assistantMessage = await createAssistantPlaceholder(
+        conversationId: conversationId,
+        modelId: modelId,
+        providerKey: providerKey,
+        turnId: const Uuid().v4(),
+      );
+      return (assistantMessage: assistantMessage, runId: null);
+    }
+    final result = await chatService.beginAssistantGeneration(
+      conversationId: conversationId,
+      modelId: modelId,
+      providerId: providerKey,
+      anchorGroupId: anchorGroupId,
+      truncateFuture: truncateFuture,
+    );
+    return (assistantMessage: result.assistantMessage, runId: result.run.id);
   }
 
   Future<({ChatMessage assistantMessage, String? runId})> beginRegeneration({

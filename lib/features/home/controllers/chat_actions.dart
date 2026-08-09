@@ -1076,26 +1076,37 @@ class ChatActions {
       }
     }
 
-    final targetGroupId = versioning.targetGroupId;
-    if (targetGroupId == null) {
-      return ChatActionResult.error('invalid_versioning');
+    late final ({ChatMessage assistantMessage, String? runId}) begin;
+    if (assistantAsNewReply && message.role == 'assistant') {
+      begin = await messageGenerationService.beginAssistantGeneration(
+        conversationId: conversation.id,
+        modelId: modelId,
+        providerKey: providerKey,
+        anchorGroupId: message.groupId ?? message.id,
+        truncateFuture: settings.regenerateDeleteTrailingMessages,
+      );
+    } else {
+      final targetGroupId = versioning.targetGroupId;
+      if (targetGroupId == null) {
+        return ChatActionResult.error('invalid_versioning');
+      }
+      final nextVersion = isTemporaryConversation
+          ? versioning.nextVersion
+          : await chatService.getMaxMessageVersionForGroup(
+                  conversation.id,
+                  targetGroupId,
+                ) +
+                1;
+      begin = await messageGenerationService.beginRegeneration(
+        conversationId: conversation.id,
+        modelId: modelId,
+        providerKey: providerKey,
+        turnId: targetTurnId,
+        groupId: targetGroupId,
+        version: nextVersion,
+        truncateFuture: settings.regenerateDeleteTrailingMessages,
+      );
     }
-    final nextVersion = isTemporaryConversation
-        ? versioning.nextVersion
-        : await chatService.getMaxMessageVersionForGroup(
-                conversation.id,
-                targetGroupId,
-              ) +
-              1;
-    final begin = await messageGenerationService.beginRegeneration(
-      conversationId: conversation.id,
-      modelId: modelId,
-      providerKey: providerKey,
-      turnId: targetTurnId,
-      groupId: targetGroupId,
-      version: nextVersion,
-      truncateFuture: settings.regenerateDeleteTrailingMessages,
-    );
     final assistantMessage = begin.assistantMessage;
     _registerGenerationRun(assistantMessage.id, begin.runId);
     _activeAssistantMessages.put(assistantMessage);
@@ -1104,8 +1115,9 @@ class ChatActions {
     // 让 MessageListView 首次渲染时即可识别流式状态。
     streamController.markStreamingStarted(assistantMessage.id);
 
-    final gid = assistantMessage.groupId ?? assistantMessage.id;
-    _versionSelections[gid] = assistantMessage.version;
+    if (assistantMessage.groupId case final groupId?) {
+      _versionSelections[groupId] = assistantMessage.version;
+    }
 
     final regenerationMessages = ChatActions.buildRegenerationMessages(
       messages: completeMessages,
