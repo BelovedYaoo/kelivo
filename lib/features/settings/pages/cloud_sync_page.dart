@@ -18,6 +18,7 @@ import '../../../shared/widgets/ios_tactile.dart';
 import '../../../shared/widgets/ios_tile_button.dart';
 import '../../../shared/widgets/snackbar.dart';
 import '../../../theme/app_font_weights.dart';
+import '../../../theme/app_semantic_colors.dart';
 import '../../scan/pages/qr_scan_page.dart';
 import 'cloud_sync_failure_text.dart';
 import 'mobile_account_recovery_page.dart';
@@ -328,55 +329,132 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
     _serverUrlController.text = _customServerUrl;
   }
 
+  InputDecoration _serverFieldDecoration(
+    BuildContext context, {
+    String? hintText,
+  }) {
+    final cs = Theme.of(context).colorScheme;
+    final radius = BorderRadius.circular(widget.desktop ? 10 : 12);
+    final idleBorder = OutlineInputBorder(
+      borderRadius: radius,
+      borderSide: BorderSide.none,
+    );
+    return InputDecoration(
+      hintText: hintText,
+      isDense: true,
+      filled: true,
+      fillColor: context.appColors.surfaceFill,
+      hintStyle: TextStyle(
+        fontSize: 15,
+        fontWeight: AppFontWeights.medium,
+        color: cs.onSurface.withValues(alpha: 0.46),
+      ),
+      border: idleBorder,
+      enabledBorder: idleBorder,
+      focusedBorder: OutlineInputBorder(
+        borderRadius: radius,
+        borderSide: BorderSide(color: cs.primary, width: 1),
+      ),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+    );
+  }
+
   Widget _buildServerSection(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final cs = Theme.of(context).colorScheme;
     final isCustom = _serverChoice == _ServerChoice.custom;
+    final fieldTextStyle = TextStyle(
+      fontSize: 15,
+      fontWeight: AppFontWeights.medium,
+      color: cs.onSurface.withValues(alpha: 0.92),
+    );
+    final dropdownTheme = Theme.of(context).copyWith(
+      splashFactory: NoSplash.splashFactory,
+      splashColor: Colors.transparent,
+      highlightColor: Colors.transparent,
+      hoverColor: cs.onSurface.withValues(alpha: 0.05),
+    );
+
     return _Section(
       title: l10n.cloudSyncServerSectionTitle,
       children: [
-        DropdownButtonFormField<_ServerChoice>(
-          value: _serverChoice,
-          decoration: const InputDecoration(
-            border: OutlineInputBorder(),
-            isDense: true,
-            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Column(
+            children: [
+              Theme(
+                data: dropdownTheme,
+                child: DropdownButtonFormField<_ServerChoice>(
+                  key: ValueKey(_serverChoice),
+                  initialValue: _serverChoice,
+                  isExpanded: true,
+                  borderRadius: BorderRadius.circular(12),
+                  dropdownColor: context.appColors.surfaceCard,
+                  focusColor: Colors.transparent,
+                  enableFeedback: false,
+                  icon: Icon(
+                    Lucide.ChevronDown,
+                    size: 16,
+                    color: cs.onSurface.withValues(alpha: 0.7),
+                  ),
+                  style: fieldTextStyle,
+                  decoration: _serverFieldDecoration(context),
+                  items: <DropdownMenuItem<_ServerChoice>>[
+                    DropdownMenuItem(
+                      value: _ServerChoice.cloudflare,
+                      child: Text(
+                        l10n.cloudSyncServerCloudflareOption,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    DropdownMenuItem(
+                      value: _ServerChoice.aliyun,
+                      child: Text(
+                        l10n.cloudSyncServerAliyunOption,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    DropdownMenuItem(
+                      value: _ServerChoice.custom,
+                      child: Text(
+                        l10n.cloudSyncServerCustomOption,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                  onChanged: (value) {
+                    if (value == null) return;
+                    setState(() {
+                      _serverChoice = value;
+                      if (value == _ServerChoice.custom) {
+                        _serverUrlController.text = _customServerUrl;
+                      }
+                    });
+                    _saveServerSelection(context, l10n);
+                  },
+                ),
+              ),
+              if (isCustom) ...[
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _serverUrlController,
+                  keyboardType: TextInputType.url,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  style: fieldTextStyle,
+                  decoration: _serverFieldDecoration(
+                    context,
+                    hintText: l10n.cloudSyncServerUrlHint,
+                  ),
+                  onChanged: (_) => _saveServerSelection(context, l10n),
+                ),
+              ],
+            ],
           ),
-          items: const <DropdownMenuItem<_ServerChoice>>[
-            DropdownMenuItem(
-              value: _ServerChoice.cloudflare,
-              child: Text("Cloudflare（美国，可能需要梯子）"),
-            ),
-            DropdownMenuItem(
-              value: _ServerChoice.aliyun,
-              child: Text("阿里云（武汉，无需梯子）"),
-            ),
-            DropdownMenuItem(value: _ServerChoice.custom, child: Text("自定义")),
-          ],
-          onChanged: (value) {
-            if (value == null) return;
-            setState(() {
-              _serverChoice = value;
-              if (value == _ServerChoice.custom) {
-                _serverUrlController.text = _customServerUrl;
-              }
-            });
-            _saveServerSelection(context, l10n);
-          },
         ),
-        if (isCustom) ...[
-          const SizedBox(height: 8),
-          TextField(
-            controller: _serverUrlController,
-            keyboardType: TextInputType.url,
-            autocorrect: false,
-            decoration: InputDecoration(
-              hintText: l10n.cloudSyncServerUrlHint,
-              border: const OutlineInputBorder(),
-              isDense: true,
-            ),
-            onChanged: (_) => _saveServerSelection(context, l10n),
-          ),
-        ],
       ],
     );
   }
@@ -385,16 +463,12 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
     BuildContext context,
     AppLocalizations l10n,
   ) async {
-    String? normalized;
-    switch (_serverChoice) {
-      case _ServerChoice.cloudflare:
-        normalized = defaultCloudSyncBaseUrl;
-      case _ServerChoice.aliyun:
-        normalized = aliyunCloudSyncBaseUrl;
-      case _ServerChoice.custom:
-        normalized = _serverUrlController.text.trim();
-    }
-    if (normalized == null || normalized.isEmpty) return;
+    final normalized = switch (_serverChoice) {
+      _ServerChoice.cloudflare => defaultCloudSyncBaseUrl,
+      _ServerChoice.aliyun => aliyunCloudSyncBaseUrl,
+      _ServerChoice.custom => _serverUrlController.text.trim(),
+    };
+    if (normalized.isEmpty) return;
     final prefs = await SharedPreferences.getInstance();
     if (normalized == defaultCloudSyncBaseUrl) {
       cloudSyncBaseUrlOverride = "";

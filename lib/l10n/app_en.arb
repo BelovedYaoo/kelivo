@@ -2695,7 +2695,8 @@
   "syncConflictOverwriteNotice": "Your change has been overwritten by another device",
   "cloudSyncServerSectionTitle": "Server",
   "cloudSyncServerUrlHint": "Server URL (leave empty to use default)",
-  "cloudSyncServerUseCloudflare": "Cloudflare",
-  "cloudSyncServerSave": "Save",
+  "cloudSyncServerCloudflareOption": "Cloudflare (United States, proxy may be required)",
+  "cloudSyncServerAliyunOption": "Alibaba Cloud (Wuhan, no proxy required)",
+  "cloudSyncServerCustomOption": "Custom",
   "cloudSyncServerSwitchNotice": "Server saved. Sign out and sign in again to use the new server."
 }

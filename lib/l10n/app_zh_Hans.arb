@@ -2671,7 +2671,8 @@
   "syncConflictOverwriteNotice": "你的修改已被其他设备覆盖",
   "cloudSyncServerSectionTitle": "服务器",
   "cloudSyncServerUrlHint": "服务器地址（留空使用默认）",
-  "cloudSyncServerUseCloudflare": "Cloudflare",
-  "cloudSyncServerSave": "保存",
+  "cloudSyncServerCloudflareOption": "Cloudflare（美国，可能需要梯子）",
+  "cloudSyncServerAliyunOption": "阿里云（武汉，无需梯子）",
+  "cloudSyncServerCustomOption": "自定义",
   "cloudSyncServerSwitchNotice": "服务器已保存。请退出并重新登录以使用新服务器。"
 }

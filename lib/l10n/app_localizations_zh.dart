@@ -6047,10 +6047,13 @@ class AppLocalizationsZh extends AppLocalizations {
   String get cloudSyncServerUrlHint => '服务器地址（留空使用默认）';
 
   @override
-  String get cloudSyncServerUseCloudflare => 'Cloudflare';
+  String get cloudSyncServerCloudflareOption => 'Cloudflare（美国，可能需要梯子）';
 
   @override
-  String get cloudSyncServerSave => '保存';
+  String get cloudSyncServerAliyunOption => '阿里云（武汉，无需梯子）';
+
+  @override
+  String get cloudSyncServerCustomOption => '自定义';
 
   @override
   String get cloudSyncServerSwitchNotice => '服务器已保存。请退出并重新登录以使用新服务器。';
@@ -12099,10 +12102,13 @@ class AppLocalizationsZhHans extends AppLocalizationsZh {
   String get cloudSyncServerUrlHint => '服务器地址（留空使用默认）';
 
   @override
-  String get cloudSyncServerUseCloudflare => 'Cloudflare';
+  String get cloudSyncServerCloudflareOption => 'Cloudflare（美国，可能需要梯子）';
 
   @override
-  String get cloudSyncServerSave => '保存';
+  String get cloudSyncServerAliyunOption => '阿里云（武汉，无需梯子）';
+
+  @override
+  String get cloudSyncServerCustomOption => '自定义';
 
   @override
   String get cloudSyncServerSwitchNotice => '服务器已保存。请退出并重新登录以使用新服务器。';
@@ -18152,10 +18158,13 @@ class AppLocalizationsZhHant extends AppLocalizationsZh {
   String get cloudSyncServerUrlHint => '伺服器位址（留空使用預設）';
 
   @override
-  String get cloudSyncServerUseCloudflare => 'Cloudflare';
+  String get cloudSyncServerCloudflareOption => 'Cloudflare（美國，可能需要代理）';
 
   @override
-  String get cloudSyncServerSave => '儲存';
+  String get cloudSyncServerAliyunOption => '阿里雲（武漢，無需代理）';
+
+  @override
+  String get cloudSyncServerCustomOption => '自訂';
 
   @override
   String get cloudSyncServerSwitchNotice => '伺服器已儲存。請登出並重新登入以使用新伺服器。';

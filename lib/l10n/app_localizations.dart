@@ -11546,17 +11546,23 @@ abstract class AppLocalizations {
   /// **'Server URL (leave empty to use default)'**
   String get cloudSyncServerUrlHint;
 
-  /// No description provided for @cloudSyncServerUseCloudflare.
+  /// No description provided for @cloudSyncServerCloudflareOption.
   ///
   /// In en, this message translates to:
-  /// **'Cloudflare'**
-  String get cloudSyncServerUseCloudflare;
+  /// **'Cloudflare (United States, proxy may be required)'**
+  String get cloudSyncServerCloudflareOption;
 
-  /// No description provided for @cloudSyncServerSave.
+  /// No description provided for @cloudSyncServerAliyunOption.
   ///
   /// In en, this message translates to:
-  /// **'Save'**
-  String get cloudSyncServerSave;
+  /// **'Alibaba Cloud (Wuhan, no proxy required)'**
+  String get cloudSyncServerAliyunOption;
+
+  /// No description provided for @cloudSyncServerCustomOption.
+  ///
+  /// In en, this message translates to:
+  /// **'Custom'**
+  String get cloudSyncServerCustomOption;
 
   /// No description provided for @cloudSyncServerSwitchNotice.
   ///

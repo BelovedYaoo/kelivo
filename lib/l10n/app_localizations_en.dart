@@ -6315,10 +6315,15 @@ class AppLocalizationsEn extends AppLocalizations {
       'Server URL (leave empty to use default)';
 
   @override
-  String get cloudSyncServerUseCloudflare => 'Cloudflare';
+  String get cloudSyncServerCloudflareOption =>
+      'Cloudflare (United States, proxy may be required)';
 
   @override
-  String get cloudSyncServerSave => 'Save';
+  String get cloudSyncServerAliyunOption =>
+      'Alibaba Cloud (Wuhan, no proxy required)';
+
+  @override
+  String get cloudSyncServerCustomOption => 'Custom';
 
   @override
   String get cloudSyncServerSwitchNotice =>
