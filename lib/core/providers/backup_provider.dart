@@ -1,8 +1,10 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
 import '../models/backup.dart';
+import 'mcp_provider.dart';
 import '../services/chat/chat_service.dart';
 import '../services/backup/data_sync.dart';
 
@@ -13,8 +15,25 @@ class BackupProvider extends ChangeNotifier {
 
   BackupProvider({
     required ChatService chatService,
+    required McpProvider mcpProvider,
     LocalBackupOptions? initialOptions,
-  }) : _dataSync = DataSync(chatService: chatService),
+  }) : _dataSync = DataSync(
+         chatService: chatService,
+         mcpBackupSettings: (
+           snapshotServers: () async {
+             await mcpProvider.ready;
+             return jsonEncode(
+               mcpProvider.servers
+                   .map((server) => server.toJson())
+                   .toList(growable: false),
+             );
+           },
+           restoreServers: (rawJson) async {
+             await mcpProvider.ready;
+             await mcpProvider.replaceAllFromJson(rawJson, allowEmpty: true);
+           },
+         ),
+       ),
        _options = initialOptions ?? const LocalBackupOptions();
 
   LocalBackupOptions get options => _options;

@@ -597,8 +597,12 @@ class McpProvider extends ChangeNotifier with BatchedChangeNotifier {
   }
 
   /// Replace all MCP servers from a JSON string.
-  /// Accepts either the UI JSON (with top-level `mcpServers`) or the internal list format.
-  Future<void> replaceAllFromJson(String rawJson) async {
+  /// Accepts either the UI JSON (with top-level `mcpServers`) or the internal
+  /// list format. Backup restore may accept an empty legacy server list.
+  Future<void> replaceAllFromJson(
+    String rawJson, {
+    bool allowEmpty = false,
+  }) async {
     dynamic data;
     try {
       data = jsonDecode(rawJson);
@@ -773,7 +777,7 @@ class McpProvider extends ChangeNotifier with BatchedChangeNotifier {
       throw FormatException('Unrecognized or invalid MCP JSON');
     }
 
-    if (next.isEmpty) {
+    if (next.isEmpty && !allowEmpty) {
       throw FormatException('No valid MCP servers found in JSON');
     }
 
@@ -787,6 +791,7 @@ class McpProvider extends ChangeNotifier with BatchedChangeNotifier {
         }
 
         _servers = next;
+        if (allowEmpty) _ensureBuiltinFetchServerPresent();
         _status.clear();
         _errors.clear();
         for (final server in _servers) {

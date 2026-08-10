@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 
 import '../../../core/models/backup.dart';
 import '../../../core/providers/backup_provider.dart';
+import '../../../core/providers/mcp_provider.dart';
 import '../../../core/providers/settings_provider.dart';
 import '../../../core/services/backup/chatbox_importer.dart';
 import '../../../core/services/backup/cherry_importer.dart';
@@ -30,7 +31,10 @@ class BackupPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ChangeNotifierProvider<BackupProvider>(
-      create: (_) => BackupProvider(chatService: context.read<ChatService>()),
+      create: (_) => BackupProvider(
+        chatService: context.read<ChatService>(),
+        mcpProvider: context.read<McpProvider>(),
+      ),
       child: _LocalBackupContent(embedded: embedded),
     );
   }

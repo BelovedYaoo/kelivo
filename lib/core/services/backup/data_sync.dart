@@ -38,6 +38,11 @@ typedef _VersionedBackupInfo = ({
   String normalizedManifestSha256,
 });
 
+typedef McpBackupSettingsBridge = ({
+  Future<String> Function() snapshotServers,
+  Future<void> Function(String rawJson) restoreServers,
+});
+
 Future<void> _extractBackupZipInIsolate(String zipPath, String extractDirPath) {
   return Isolate.run(() => DataSync._extractZipSync(zipPath, extractDirPath));
 }
@@ -115,13 +120,15 @@ class DataSync {
   static const _maxRestoreEntryBytes = 8 * 1024 * 1024 * 1024;
   static const _maxRestoreTotalBytes = 16 * 1024 * 1024 * 1024;
   static const _maxRestoreEntries = 100000;
+  static const _mcpServersSettingsKey = 'mcp_servers_v1';
 
   final ChatService chatService;
+  final McpBackupSettingsBridge? mcpBackupSettings;
   BackupMergeReport? _lastMergeReport;
 
   BackupMergeReport? get lastMergeReport => _lastMergeReport;
 
-  DataSync({required this.chatService});
+  DataSync({required this.chatService, this.mcpBackupSettings});
 
   // 恢复边界只能执行本地写入，避免重新接入已退役的明文同步日志。
   static Future<T> _runLocalRestoreWrite<T>({
@@ -1024,10 +1031,15 @@ class DataSync {
           )
           .toList(),
       messages: (chats['messages'] as List)
-          .map(
-            (entry) =>
-                ChatMessage.fromJson((entry as Map).cast<String, dynamic>()),
-          )
+          .map((entry) {
+            final messageJson = (entry as Map).cast<String, dynamic>();
+            if (!messageJson.containsKey('attachments')) {
+              // 早期 chats.json v1 尚无附件字段；仅缺失等价于无附件，
+              // 字段存在但损坏时仍交由 ChatMessage.fromJson 拒绝。
+              messageJson['attachments'] = const <Object?>[];
+            }
+            return ChatMessage.fromJson(messageJson);
+          })
           .map(
             (message) => message.isStreaming
                 ? message.copyWith(isStreaming: false)
@@ -1202,6 +1214,10 @@ class DataSync {
   Future<String> _exportSettingsJson() async {
     final prefs = await SharedPreferencesAsync.instance;
     final map = await prefs.snapshotForRegularBackup();
+    final bridge = mcpBackupSettings;
+    if (bridge != null) {
+      map[_mcpServersSettingsKey] = await bridge.snapshotServers();
+    }
     return jsonEncode(map);
   }
 
@@ -1281,6 +1297,24 @@ class DataSync {
           );
           return;
         }
+      }
+      final bridge = mcpBackupSettings;
+      String? pendingMcpServers;
+      if (bridge != null && settings.containsKey(_mcpServersSettingsKey)) {
+        final incomingMcpServers = settings.remove(_mcpServersSettingsKey);
+        if (incomingMcpServers is! String) {
+          throw const FormatException(_mcpServersSettingsKey);
+        }
+        pendingMcpServers = mode == RestoreMode.merge
+            ? _mergeJsonListById(
+                await bridge.snapshotServers(),
+                incomingMcpServers,
+              )
+            : incomingMcpServers;
+        BackupSettingsValidator.validateValue(
+          _mcpServersSettingsKey,
+          pendingMcpServers,
+        );
       }
       File? deferredVersionedDatabaseFile;
       await _runLocalRestoreWrite<void>(
@@ -1872,6 +1906,10 @@ class DataSync {
               databaseFile,
               attachmentDirectories: attachmentDirectories,
             );
+          }
+          final mcpServers = pendingMcpServers;
+          if (mcpServers != null) {
+            await bridge!.restoreServers(mcpServers);
           }
         },
       );

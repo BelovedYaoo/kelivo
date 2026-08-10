@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 
 import '../../l10n/app_localizations.dart';
 
@@ -13,6 +14,7 @@ String restoreFailureDiagnosticCode(Object error) {
   final Object? message = switch (error) {
     StateError() => error.message,
     FormatException() => error.message,
+    KelivoSecureCoreException() => '${error.operation}:${error.status.name}',
     PlatformException() => error.code,
     _ => null,
   };

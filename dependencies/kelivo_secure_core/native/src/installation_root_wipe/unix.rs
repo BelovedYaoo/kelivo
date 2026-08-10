@@ -1,5 +1,7 @@
 use super::{SHARED_PREFERENCES_FILE_MAX_SIZE, verify_shared_preferences_document};
 use crate::KelivoStatus;
+#[cfg(target_os = "android")]
+use std::fs;
 use std::{
     ffi::{CStr, CString},
     fs::File,
@@ -73,6 +75,24 @@ fn validate_android_user_zero_alias_evidence(
 }
 
 #[cfg(any(target_os = "android", test))]
+fn parse_positive_decimal(digits: &[u8]) -> Result<u64, KelivoStatus> {
+    if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
+        return Err(KelivoStatus::IoFailure);
+    }
+    let mut parsed = 0_u64;
+    for digit in digits {
+        parsed = parsed
+            .checked_mul(10)
+            .and_then(|value| value.checked_add(u64::from(*digit - b'0')))
+            .ok_or(KelivoStatus::IoFailure)?;
+    }
+    if parsed == 0 {
+        return Err(KelivoStatus::IoFailure);
+    }
+    Ok(parsed)
+}
+
+#[cfg(any(target_os = "android", test))]
 fn parse_android_fd_mount_id(bytes: &[u8]) -> Result<u64, KelivoStatus> {
     let mut mount_id = None;
     for line in bytes.split(|byte| *byte == b'\n') {
@@ -82,23 +102,80 @@ fn parse_android_fd_mount_id(bytes: &[u8]) -> Result<u64, KelivoStatus> {
         if mount_id.is_some() {
             return Err(KelivoStatus::IoFailure);
         }
-        let digits = raw_value.trim_ascii();
-        if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
-            return Err(KelivoStatus::IoFailure);
-        }
-        let mut parsed = 0_u64;
-        for digit in digits {
-            parsed = parsed
-                .checked_mul(10)
-                .and_then(|value| value.checked_add(u64::from(*digit - b'0')))
-                .ok_or(KelivoStatus::IoFailure)?;
-        }
-        if parsed == 0 {
-            return Err(KelivoStatus::IoFailure);
-        }
-        mount_id = Some(parsed);
+        mount_id = Some(parse_positive_decimal(raw_value.trim_ascii())?);
     }
     mount_id.ok_or(KelivoStatus::IoFailure)
+}
+
+#[cfg(any(target_os = "android", test))]
+fn decode_mountinfo_path(raw: &[u8]) -> Result<Vec<u8>, KelivoStatus> {
+    let mut decoded = Vec::with_capacity(raw.len());
+    let mut index = 0;
+    while index < raw.len() {
+        if raw[index] != b'\\' {
+            if raw[index] == 0 {
+                return Err(KelivoStatus::IoFailure);
+            }
+            decoded.push(raw[index]);
+            index += 1;
+            continue;
+        }
+        if index + 4 > raw.len() {
+            return Err(KelivoStatus::IoFailure);
+        }
+        decoded.push(match &raw[index..index + 4] {
+            b"\\040" => b' ',
+            b"\\011" => b'\t',
+            b"\\012" => b'\n',
+            b"\\134" => b'\\',
+            _ => return Err(KelivoStatus::IoFailure),
+        });
+        index += 4;
+    }
+    Ok(decoded)
+}
+
+#[cfg(any(target_os = "android", test))]
+fn mountinfo_path_contains(mount_point: &[u8], path: &[u8]) -> bool {
+    if mount_point == b"/" {
+        return path.starts_with(b"/");
+    }
+    path == mount_point
+        || (path.starts_with(mount_point) && path.get(mount_point.len()) == Some(&b'/'))
+}
+
+#[cfg(any(target_os = "android", test))]
+fn parse_android_mountinfo_mount_id(bytes: &[u8], path: &[u8]) -> Result<u64, KelivoStatus> {
+    if !path.starts_with(b"/") || path.ends_with(b" (deleted)") {
+        return Err(KelivoStatus::IoFailure);
+    }
+    let mut best = None;
+    for line in bytes.split(|byte| *byte == b'\n') {
+        if line.is_empty() {
+            continue;
+        }
+        if !line.windows(3).any(|window| window == b" - ") {
+            return Err(KelivoStatus::IoFailure);
+        }
+        let mut fields = line.split(|byte| *byte == b' ');
+        let mount_id = parse_positive_decimal(fields.next().ok_or(KelivoStatus::IoFailure)?)?;
+        fields.next().ok_or(KelivoStatus::IoFailure)?;
+        fields.next().ok_or(KelivoStatus::IoFailure)?;
+        fields.next().ok_or(KelivoStatus::IoFailure)?;
+        let mount_point = decode_mountinfo_path(fields.next().ok_or(KelivoStatus::IoFailure)?)?;
+        if !mount_point.starts_with(b"/") {
+            return Err(KelivoStatus::IoFailure);
+        }
+        if mountinfo_path_contains(&mount_point, path)
+            && best
+                .as_ref()
+                .is_none_or(|(length, _)| mount_point.len() >= *length)
+        {
+            best = Some((mount_point.len(), mount_id));
+        }
+    }
+    best.map(|(_, mount_id)| mount_id)
+        .ok_or(KelivoStatus::IoFailure)
 }
 
 #[cfg(any(target_os = "android", test))]
@@ -708,6 +785,11 @@ fn android_fd_mount_id(file: &File) -> Result<u64, KelivoStatus> {
 
 #[cfg(target_os = "android")]
 fn android_raw_fd_mount_id(fd: libc::c_int) -> Result<u64, KelivoStatus> {
+    android_raw_fd_mount_id_from_fdinfo(fd).or_else(|_| android_raw_fd_mount_id_from_mountinfo(fd))
+}
+
+#[cfg(target_os = "android")]
+fn android_raw_fd_mount_id_from_fdinfo(fd: libc::c_int) -> Result<u64, KelivoStatus> {
     const MAX_FDINFO_SIZE: u64 = 4096;
     let path = format!("/proc/self/fdinfo/{fd}");
     let mut bytes = Vec::with_capacity(512);
@@ -720,6 +802,26 @@ fn android_raw_fd_mount_id(fd: libc::c_int) -> Result<u64, KelivoStatus> {
         return Err(KelivoStatus::IoFailure);
     }
     parse_android_fd_mount_id(&bytes)
+}
+
+#[cfg(target_os = "android")]
+fn android_raw_fd_mount_id_from_mountinfo(fd: libc::c_int) -> Result<u64, KelivoStatus> {
+    const MAX_MOUNTINFO_SIZE: u64 = 1024 * 1024;
+    // 部分 OEM 禁止应用读取 fdinfo，但仍提供只读的 fd 链接与 mountinfo。
+    // 两者均由同一挂载命名空间内核生成，可继续识别同文件系统的 bind mount。
+    let fd_path =
+        fs::read_link(format!("/proc/self/fd/{fd}")).map_err(|_| KelivoStatus::IoFailure)?;
+    let path = fd_path.as_os_str().as_encoded_bytes();
+    let mut bytes = Vec::with_capacity(32 * 1024);
+    File::open("/proc/self/mountinfo")
+        .map_err(|_| KelivoStatus::IoFailure)?
+        .take(MAX_MOUNTINFO_SIZE + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| KelivoStatus::IoFailure)?;
+    if u64::try_from(bytes.len()).map_err(|_| KelivoStatus::IoFailure)? > MAX_MOUNTINFO_SIZE {
+        return Err(KelivoStatus::IoFailure);
+    }
+    parse_android_mountinfo_mount_id(&bytes, path)
 }
 
 fn retire_plaintext_backups(root: &File) -> Result<(), KelivoStatus> {
@@ -1620,6 +1722,51 @@ mod tests {
         );
         assert_eq!(
             parse_android_fd_mount_id(b"pos:\t0\nflags:\t0100000\n"),
+            Err(KelivoStatus::IoFailure),
+        );
+    }
+
+    #[test]
+    fn android_mountinfo_fallback_selects_the_deepest_mount() {
+        let mountinfo = [
+            b"34 1 0:1 / / rw - rootfs rootfs rw\n".as_slice(),
+            b"202 34 253:1 / /data rw - ext4 /dev/block/data rw\n".as_slice(),
+            b"303 202 253:1 /user/0 /data/user/0 rw - ext4 /dev/block/data rw\n".as_slice(),
+        ]
+        .concat();
+        assert_eq!(
+            parse_android_mountinfo_mount_id(
+                &mountinfo,
+                b"/data/user/0/top.bemylover.olivia/files",
+            ),
+            Ok(303),
+        );
+        assert_eq!(
+            parse_android_mountinfo_mount_id(&mountinfo, b"/database"),
+            Ok(34),
+        );
+    }
+
+    #[test]
+    fn android_mountinfo_fallback_decodes_paths_and_rejects_stale_fds() {
+        let mountinfo = [
+            b"34 1 0:1 / / rw - rootfs rootfs rw\n".as_slice(),
+            b"404 34 0:42 / /storage/My\\040Files rw - tmpfs tmpfs rw\n".as_slice(),
+        ]
+        .concat();
+        assert_eq!(
+            parse_android_mountinfo_mount_id(&mountinfo, b"/storage/My Files/cache"),
+            Ok(404),
+        );
+        assert_eq!(
+            parse_android_mountinfo_mount_id(&mountinfo, b"/storage/My Files (deleted)"),
+            Err(KelivoStatus::IoFailure),
+        );
+        assert_eq!(
+            parse_android_mountinfo_mount_id(
+                b"34 1 0:1 / /bad\\999 rw - rootfs rootfs rw\n",
+                b"/bad",
+            ),
             Err(KelivoStatus::IoFailure),
         );
     }

@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:Kelivo/core/providers/settings_provider.dart';
+import 'package:Kelivo/core/providers/mcp_provider.dart';
 import 'package:Kelivo/core/services/chat/chat_service.dart';
 import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
 import 'package:Kelivo/desktop/setting/backup_pane.dart';
@@ -15,6 +16,11 @@ Widget _buildHarness({required Widget home}) {
     providers: [
       ChangeNotifierProvider<SettingsProvider>(
         create: (_) => SettingsProvider(
+          syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+        ),
+      ),
+      ChangeNotifierProvider<McpProvider>(
+        create: (_) => McpProvider(
           syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
         ),
       ),

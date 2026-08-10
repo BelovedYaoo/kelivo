@@ -20,6 +20,7 @@ import 'package:Kelivo/core/database/chat_database_repository.dart';
 import 'package:Kelivo/core/models/backup.dart';
 import 'package:Kelivo/core/models/chat_message.dart';
 import 'package:Kelivo/core/models/conversation.dart';
+import 'package:Kelivo/core/providers/mcp_provider.dart';
 import 'package:Kelivo/core/services/backup/data_sync.dart';
 import 'package:Kelivo/core/services/backup/restore_receipt.dart';
 import 'package:Kelivo/core/services/backup/restore_startup_gate.dart';
@@ -638,6 +639,87 @@ void main() {
             utf8.decode(settingsBytes),
             contains('normal-backup-api-secret'),
           );
+        } finally {
+          archive?.clearSync();
+          input.closeSync();
+          await DataSync.cleanupTemporaryLocalExportFile(backupFile);
+        }
+      },
+    );
+
+    test(
+      'local export reads MCP servers through the plaintext bridge',
+      () async {
+        const sealedLocalServers = 'kelivo-mcp-v1:sealed-local-value';
+        final plaintextServers = jsonEncode([
+          {
+            'id': 'local-server',
+            'enabled': true,
+            'name': 'Local Server',
+            'transport': 'sse',
+            'url': 'http://local.example/sse',
+            'tools': [],
+          },
+        ]);
+        SharedPreferences.setMockInitialValues({
+          'mcp_servers_v1': sealedLocalServers,
+        });
+        final sync = DataSync(
+          chatService: ChatService(const UntrackedSyncWriteExecutor.forTests()),
+          mcpBackupSettings: (
+            snapshotServers: () async => plaintextServers,
+            restoreServers: (_) async {},
+          ),
+        );
+
+        final backupFile = await sync.prepareLocalExportFile(
+          const LocalBackupOptions(includeChats: false, includeFiles: false),
+        );
+        final input = InputFileStream(backupFile.path);
+        Archive? archive;
+        try {
+          archive = ZipDecoder().decodeStream(input);
+          final settingsEntry = archive.findFile('settings.json');
+          expect(settingsEntry, isNotNull);
+          final settingsBytes = settingsEntry!.readBytes()!;
+          final settings =
+              jsonDecode(utf8.decode(settingsBytes)) as Map<String, dynamic>;
+          expect(settings['mcp_servers_v1'], plaintextServers);
+          expect(
+            utf8.decode(settingsBytes),
+            isNot(contains(sealedLocalServers)),
+          );
+        } finally {
+          archive?.clearSync();
+          input.closeSync();
+          await DataSync.cleanupTemporaryLocalExportFile(backupFile);
+        }
+      },
+    );
+
+    test(
+      'local export includes the MCP snapshot when its preference key is absent',
+      () async {
+        SharedPreferences.setMockInitialValues(const <String, Object>{});
+        final sync = DataSync(
+          chatService: ChatService(const UntrackedSyncWriteExecutor.forTests()),
+          mcpBackupSettings: (
+            snapshotServers: () async => '[]',
+            restoreServers: (_) async {},
+          ),
+        );
+
+        final backupFile = await sync.prepareLocalExportFile(
+          const LocalBackupOptions(includeChats: false, includeFiles: false),
+        );
+        final input = InputFileStream(backupFile.path);
+        Archive? archive;
+        try {
+          archive = ZipDecoder().decodeStream(input);
+          final settingsBytes = archive.findFile('settings.json')!.readBytes()!;
+          final settings =
+              jsonDecode(utf8.decode(settingsBytes)) as Map<String, dynamic>;
+          expect(settings['mcp_servers_v1'], '[]');
         } finally {
           archive?.clearSync();
           input.closeSync();
@@ -1923,6 +2005,202 @@ void main() {
     );
 
     test(
+      'merge restore reads MCP servers through the plaintext bridge',
+      () async {
+        const sealedLocalServers = 'kelivo-mcp-v1:sealed-local-value';
+        SharedPreferences.setMockInitialValues({
+          'mcp_servers_v1': sealedLocalServers,
+        });
+        final localServers = jsonEncode([
+          {
+            'id': 'local-server',
+            'enabled': true,
+            'name': 'Local Server',
+            'transport': 'sse',
+            'url': 'http://local.example/sse',
+            'tools': [],
+          },
+          {
+            'id': 'shared-server',
+            'enabled': true,
+            'name': 'Local Shared Server',
+            'transport': 'sse',
+            'url': 'http://local-shared.example/sse',
+            'tools': [],
+          },
+        ]);
+        final settingsFile = File('${root.path}/sealed_mcp_settings.json');
+        await settingsFile.writeAsString(
+          jsonEncode({
+            'mcp_servers_v1': jsonEncode([
+              {
+                'id': 'shared-server',
+                'enabled': false,
+                'name': 'Imported Shared Server',
+                'transport': 'sse',
+                'url': 'http://imported-shared.example/sse',
+                'tools': [],
+              },
+              {
+                'id': 'remote-server',
+                'enabled': true,
+                'name': 'Remote Server',
+                'transport': 'http',
+                'url': 'http://remote.example/mcp',
+                'tools': [],
+              },
+            ]),
+          }),
+        );
+        final zipFile = File('${root.path}/sealed_mcp_settings.zip');
+        final encoder = ZipFileEncoder();
+        encoder.create(zipFile.path);
+        encoder.addFileSync(settingsFile, 'settings.json');
+        encoder.closeSync();
+
+        String? restoredServersRaw;
+        final sync = DataSync(
+          chatService: ChatService(const UntrackedSyncWriteExecutor.forTests()),
+          mcpBackupSettings: (
+            snapshotServers: () async => localServers,
+            restoreServers: (rawJson) async {
+              restoredServersRaw = rawJson;
+            },
+          ),
+        );
+        await sync.restoreLocalFile(
+          zipFile,
+          const LocalBackupOptions(includeChats: false, includeFiles: false),
+          mode: RestoreMode.merge,
+        );
+
+        final prefs = await SharedPreferences.getInstance();
+        expect(prefs.getString('mcp_servers_v1'), sealedLocalServers);
+        final restoredServers = jsonDecode(restoredServersRaw!) as List;
+        expect(restoredServers, hasLength(3));
+        expect(
+          restoredServers
+              .where((entry) => (entry as Map)['id'] == 'shared-server')
+              .single['name'],
+          'Local Shared Server',
+        );
+        expect(
+          restoredServers.any(
+            (entry) =>
+                (entry as Map)['id'] == 'remote-server' &&
+                entry['name'] == 'Remote Server',
+          ),
+          isTrue,
+        );
+      },
+    );
+
+    test('overwrite restore accepts an empty legacy MCP list', () async {
+      SharedPreferences.setMockInitialValues(const <String, Object>{});
+      final mcpProvider = McpProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
+      await mcpProvider.ready;
+      await mcpProvider.addServer(
+        enabled: false,
+        name: 'Local Server',
+        transport: McpTransportType.http,
+        url: 'http://local.example/mcp',
+      );
+      expect(mcpProvider.servers, hasLength(2));
+
+      final settingsFile = File('${root.path}/empty_mcp_settings.json');
+      await settingsFile.writeAsString(jsonEncode({'mcp_servers_v1': '[]'}));
+      final zipFile = File('${root.path}/empty_mcp_settings.zip');
+      final encoder = ZipFileEncoder();
+      encoder.create(zipFile.path);
+      encoder.addFileSync(settingsFile, 'settings.json');
+      encoder.closeSync();
+
+      try {
+        final sync = DataSync(
+          chatService: ChatService(const UntrackedSyncWriteExecutor.forTests()),
+          mcpBackupSettings: (
+            snapshotServers: () async => jsonEncode(
+              mcpProvider.servers
+                  .map((server) => server.toJson())
+                  .toList(growable: false),
+            ),
+            restoreServers: (rawJson) =>
+                mcpProvider.replaceAllFromJson(rawJson, allowEmpty: true),
+          ),
+        );
+        await sync.restoreLocalFile(
+          zipFile,
+          const LocalBackupOptions(includeChats: false, includeFiles: false),
+          mode: RestoreMode.overwrite,
+        );
+
+        expect(mcpProvider.servers, hasLength(1));
+        expect(mcpProvider.servers.single.id, 'kelivo_fetch');
+        final prefs = await SharedPreferences.getInstance();
+        final stored = jsonDecode(prefs.getString('mcp_servers_v1')!) as List;
+        expect(stored, hasLength(1));
+        expect((stored.single as Map)['id'], 'kelivo_fetch');
+      } finally {
+        mcpProvider.dispose();
+      }
+    });
+
+    test(
+      'merge restore rejects an invalid MCP bridge snapshot before writes',
+      () async {
+        const sealedLocalServers = 'kelivo-mcp-v1:sealed-local-value';
+        SharedPreferences.setMockInitialValues({
+          'mcp_servers_v1': sealedLocalServers,
+        });
+        final settingsFile = File('${root.path}/invalid_mcp_settings.json');
+        await settingsFile.writeAsString(
+          jsonEncode({
+            'mcp_servers_v1': jsonEncode([
+              {
+                'id': 'remote-server',
+                'enabled': true,
+                'name': 'Remote Server',
+                'transport': 'http',
+                'url': 'http://remote.example/mcp',
+                'tools': [],
+              },
+            ]),
+          }),
+        );
+        final zipFile = File('${root.path}/invalid_mcp_settings.zip');
+        final encoder = ZipFileEncoder();
+        encoder.create(zipFile.path);
+        encoder.addFileSync(settingsFile, 'settings.json');
+        encoder.closeSync();
+        var restoreCalled = false;
+        final sync = DataSync(
+          chatService: ChatService(const UntrackedSyncWriteExecutor.forTests()),
+          mcpBackupSettings: (
+            snapshotServers: () async => sealedLocalServers,
+            restoreServers: (_) async {
+              restoreCalled = true;
+            },
+          ),
+        );
+
+        await expectLater(
+          sync.restoreLocalFile(
+            zipFile,
+            const LocalBackupOptions(includeChats: false, includeFiles: false),
+            mode: RestoreMode.merge,
+          ),
+          throwsA(isA<FormatException>()),
+        );
+
+        final prefs = await SharedPreferences.getInstance();
+        expect(prefs.getString('mcp_servers_v1'), sealedLocalServers);
+        expect(restoreCalled, isFalse);
+      },
+    );
+
+    test(
       'normalizes legacy JSON string lists before merging settings',
       () async {
         SharedPreferences.setMockInitialValues({
@@ -2417,6 +2695,94 @@ void main() {
         await _expectLegacyCloudSyncStateAbsent(root);
       },
     );
+
+    test('merges legacy chat messages without attachments as empty', () async {
+      final conversation = Conversation(
+        id: 'legacy-conversation',
+        title: 'Legacy conversation',
+        messageIds: const ['legacy-message'],
+      );
+      final legacyMessage = ChatMessage(
+        id: 'legacy-message',
+        role: 'user',
+        content: 'legacy content',
+        conversationId: conversation.id,
+      ).toJson()..remove('attachments');
+      final chatsFile = File('${root.path}/legacy_chats.json');
+      await chatsFile.writeAsString(
+        jsonEncode({
+          'version': 1,
+          'conversations': [conversation.toJson()],
+          'messages': [legacyMessage],
+        }),
+      );
+      final zipFile = File('${root.path}/legacy_chats.zip');
+      final encoder = ZipFileEncoder();
+      encoder.create(zipFile.path);
+      encoder.addFileSync(validSettingsFile, 'settings.json');
+      encoder.addFileSync(chatsFile, 'chats.json');
+      encoder.closeSync();
+
+      final chatService = ChatService(
+        const UntrackedSyncWriteExecutor.forTests(),
+      );
+      await chatService.init();
+      addTearDown(chatService.close);
+
+      await DataSync(chatService: chatService).restoreLocalFile(
+        zipFile,
+        const LocalBackupOptions(includeChats: true, includeFiles: false),
+        mode: RestoreMode.merge,
+      );
+
+      final restored = await chatService.loadMessages(conversation.id);
+      expect(restored.single.content, 'legacy content');
+      expect(restored.single.attachments, isEmpty);
+    });
+
+    test('rejects malformed attachments in legacy chat messages', () async {
+      final conversation = Conversation(
+        id: 'malformed-legacy-conversation',
+        title: 'Malformed legacy conversation',
+        messageIds: const ['malformed-legacy-message'],
+      );
+      final malformedMessage = ChatMessage(
+        id: 'malformed-legacy-message',
+        role: 'user',
+        content: 'malformed legacy content',
+        conversationId: conversation.id,
+      ).toJson();
+      malformedMessage['attachments'] = 'not-a-list';
+      final chatsFile = File('${root.path}/malformed_legacy_chats.json');
+      await chatsFile.writeAsString(
+        jsonEncode({
+          'version': 1,
+          'conversations': [conversation.toJson()],
+          'messages': [malformedMessage],
+        }),
+      );
+      final zipFile = File('${root.path}/malformed_legacy_chats.zip');
+      final encoder = ZipFileEncoder();
+      encoder.create(zipFile.path);
+      encoder.addFileSync(validSettingsFile, 'settings.json');
+      encoder.addFileSync(chatsFile, 'chats.json');
+      encoder.closeSync();
+
+      await expectLater(
+        DataSync(chatService: _RecordingClearChatService()).restoreLocalFile(
+          zipFile,
+          const LocalBackupOptions(includeChats: true, includeFiles: false),
+          mode: RestoreMode.merge,
+        ),
+        throwsA(
+          isA<FormatException>().having(
+            (error) => error.message,
+            'message',
+            'chat_message.attachments',
+          ),
+        ),
+      );
+    });
 
     test('chat-only overwrite preserves live uploaded files', () async {
       final uploadDir = Directory('${root.path}/upload');

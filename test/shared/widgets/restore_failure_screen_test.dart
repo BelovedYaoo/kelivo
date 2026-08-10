@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 
 import 'package:Kelivo/l10n/app_localizations.dart';
 import 'package:Kelivo/shared/widgets/restore_failure_screen.dart';
@@ -34,6 +35,15 @@ void main() {
         ),
       ),
       'kelivo_durable_preferences_legacy_container_reset_required',
+    );
+    expect(
+      restoreFailureDiagnosticCode(
+        const KelivoSecureCoreException(
+          operation: 'installation_root_open',
+          status: KelivoSecureCoreStatus.slotUnwrapFailed,
+        ),
+      ),
+      'installation_root_open:slotUnwrapFailed',
     );
   });
 
