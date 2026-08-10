@@ -1,13 +1,13 @@
 use super::{SHARED_PREFERENCES_FILE_MAX_SIZE, verify_shared_preferences_document};
 use crate::KelivoStatus;
-#[cfg(target_os = "android")]
-use std::fs;
 use std::{
     ffi::{CStr, CString},
     fs::File,
     io::Read,
     os::fd::{AsRawFd, FromRawFd},
 };
+#[cfg(target_os = "android")]
+use std::{fs, sync::LazyLock};
 
 const MAX_COMPONENT_BYTES: usize = 255;
 const MAX_DIRECTORY_DEPTH: usize = 128;
@@ -27,6 +27,76 @@ struct OpenHow {
     mode: u64,
     resolve: u64,
 }
+#[cfg(any(target_os = "android", test))]
+const ANDROID_STATX_MNT_ID: libc::c_uint = 0x0000_1000;
+
+#[cfg(any(target_os = "android", test))]
+#[derive(Default)]
+#[repr(C)]
+struct AndroidStatxTimestamp {
+    _seconds: i64,
+    _nanoseconds: u32,
+    _reserved: i32,
+}
+
+#[cfg(any(target_os = "android", test))]
+#[derive(Default)]
+#[repr(C)]
+struct AndroidStatx {
+    stx_mask: u32,
+    _block_size: u32,
+    _attributes: u64,
+    _link_count: u32,
+    _uid: u32,
+    _gid: u32,
+    _mode: u16,
+    _reserved0: u16,
+    _inode: u64,
+    _size: u64,
+    _blocks: u64,
+    _attributes_mask: u64,
+    _access_time: AndroidStatxTimestamp,
+    _birth_time: AndroidStatxTimestamp,
+    _change_time: AndroidStatxTimestamp,
+    _modification_time: AndroidStatxTimestamp,
+    _device_type_major: u32,
+    _device_type_minor: u32,
+    _device_major: u32,
+    _device_minor: u32,
+    stx_mnt_id: u64,
+    _direct_io_memory_alignment: u32,
+    _direct_io_offset_alignment: u32,
+    _remaining: [u64; 12],
+}
+
+#[cfg(any(target_os = "android", test))]
+fn validate_android_statx_mount_id(output: &AndroidStatx) -> Result<u64, KelivoStatus> {
+    if output.stx_mask & ANDROID_STATX_MNT_ID == 0 || output.stx_mnt_id == 0 {
+        Err(KelivoStatus::IoFailure)
+    } else {
+        Ok(output.stx_mnt_id)
+    }
+}
+
+#[cfg(target_os = "android")]
+type AndroidStatxFunction = unsafe extern "C" fn(
+    libc::c_int,
+    *const libc::c_char,
+    libc::c_int,
+    libc::c_uint,
+    *mut AndroidStatx,
+) -> libc::c_int;
+
+#[cfg(target_os = "android")]
+static ANDROID_STATX_FUNCTION: LazyLock<Option<AndroidStatxFunction>> = LazyLock::new(|| {
+    let symbol = unsafe { libc::dlsym(libc::RTLD_DEFAULT, c"statx".as_ptr()) };
+    if symbol.is_null() {
+        None
+    } else {
+        // Bionic 从 API 30 暴露该符号；函数签名与稳定的 Linux UAPI ABI 一致。
+        Some(unsafe { std::mem::transmute::<*mut libc::c_void, AndroidStatxFunction>(symbol) })
+    }
+});
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct FileIdentity {
@@ -785,7 +855,31 @@ fn android_fd_mount_id(file: &File) -> Result<u64, KelivoStatus> {
 
 #[cfg(target_os = "android")]
 fn android_raw_fd_mount_id(fd: libc::c_int) -> Result<u64, KelivoStatus> {
-    android_raw_fd_mount_id_from_fdinfo(fd).or_else(|_| android_raw_fd_mount_id_from_mountinfo(fd))
+    android_raw_fd_mount_id_from_statx(fd)
+        .or_else(|_| android_raw_fd_mount_id_from_fdinfo(fd))
+        .or_else(|_| android_raw_fd_mount_id_from_mountinfo(fd))
+}
+
+#[cfg(target_os = "android")]
+fn android_raw_fd_mount_id_from_statx(fd: libc::c_int) -> Result<u64, KelivoStatus> {
+    let statx = ANDROID_STATX_FUNCTION
+        .as_ref()
+        .copied()
+        .ok_or(KelivoStatus::IoFailure)?;
+    let mut output = AndroidStatx::default();
+    if unsafe {
+        statx(
+            fd,
+            c"".as_ptr(),
+            libc::AT_EMPTY_PATH,
+            ANDROID_STATX_MNT_ID,
+            &raw mut output,
+        )
+    } != 0
+    {
+        return Err(KelivoStatus::IoFailure);
+    }
+    validate_android_statx_mount_id(&output)
 }
 
 #[cfg(target_os = "android")]
@@ -1722,6 +1816,29 @@ mod tests {
         );
         assert_eq!(
             parse_android_fd_mount_id(b"pos:\t0\nflags:\t0100000\n"),
+            Err(KelivoStatus::IoFailure),
+        );
+    }
+
+    #[test]
+    fn android_statx_mount_identity_uses_the_kernel_abi_field() {
+        assert_eq!(std::mem::size_of::<AndroidStatx>(), 256);
+        assert_eq!(std::mem::offset_of!(AndroidStatx, stx_mnt_id), 144);
+
+        let mut output = AndroidStatx::default();
+        output.stx_mask = ANDROID_STATX_MNT_ID;
+        output.stx_mnt_id = 202;
+        assert_eq!(validate_android_statx_mount_id(&output), Ok(202));
+
+        output.stx_mask = 0;
+        assert_eq!(
+            validate_android_statx_mount_id(&output),
+            Err(KelivoStatus::IoFailure),
+        );
+        output.stx_mask = ANDROID_STATX_MNT_ID;
+        output.stx_mnt_id = 0;
+        assert_eq!(
+            validate_android_statx_mount_id(&output),
             Err(KelivoStatus::IoFailure),
         );
     }
