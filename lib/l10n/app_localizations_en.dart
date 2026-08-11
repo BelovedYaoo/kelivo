@@ -456,6 +456,34 @@ class AppLocalizationsEn extends AppLocalizations {
       'The data changed on another device. Sync again to reconcile it.';
 
   @override
+  String get cloudSyncFailureAccountAlreadyRegistered =>
+      'This account is already registered. Sign in, or use account recovery if no trusted device is available.';
+
+  @override
+  String get cloudSyncFailureRegistrationRecoveryLoginRequired =>
+      'The saved registration attempt expired. Sign in to clear it; if no trusted device is available, use account recovery.';
+
+  @override
+  String get cloudSyncFailureDevicePairingConflict =>
+      'The sign-in approval state changed. Sign in again.';
+
+  @override
+  String get cloudSyncFailureAccountRecoveryStateConflict =>
+      'The account recovery state changed. Start account recovery again.';
+
+  @override
+  String get cloudSyncFailureAccountRecoveryExpired =>
+      'The account recovery request expired. Start account recovery again.';
+
+  @override
+  String get cloudSyncFailureAccountRecoveryDeviceAlreadyAuthenticated =>
+      'This device is already trusted for this account. Sign in directly; account recovery is not needed.';
+
+  @override
+  String get cloudSyncFailureSessionAlreadyActive =>
+      'An account session is already active. Sign out before signing in, registering, or recovering another account.';
+
+  @override
   String get cloudSyncFailureValidation =>
       'Some sync data or input is invalid.';
 

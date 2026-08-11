@@ -6,6 +6,18 @@ import '../../../l10n/app_localizations.dart';
 
 String cloudSyncFailureText(AppLocalizations l10n, CloudSyncException error) {
   final protocolMessage = switch (error.serverCode) {
+    'AUTH_REGISTRATION_CONFLICT' =>
+      l10n.cloudSyncFailureAccountAlreadyRegistered,
+    'AUTH_DEVICE_PAIRING_CONFLICT' =>
+      l10n.cloudSyncFailureDevicePairingConflict,
+    'ACCOUNT_RECOVERY_STATE_CONFLICT' =>
+      l10n.cloudSyncFailureAccountRecoveryStateConflict,
+    'ACCOUNT_RECOVERY_EXPIRED' => l10n.cloudSyncFailureAccountRecoveryExpired,
+    e2eeAccountRecoveryAuthGenerationInvalidCode =>
+      l10n.cloudSyncFailureAccountRecoveryStateConflict,
+    e2eeAccountRecoveryDeviceAlreadyAuthenticatedCode =>
+      l10n.cloudSyncFailureAccountRecoveryDeviceAlreadyAuthenticated,
+    'SYNC_SESSION_ALREADY_ACTIVE' => l10n.cloudSyncFailureSessionAlreadyActive,
     'SYNC_LOCAL_DEVICE_WIPE_UNSUPPORTED' =>
       l10n.cloudSyncCurrentDeviceRemovalUnavailable,
     e2eeRecoveryPassphraseMatchesPasswordCode =>
@@ -14,6 +26,8 @@ String cloudSyncFailureText(AppLocalizations l10n, CloudSyncException error) {
       l10n.cloudSyncPendingRegistrationExportMessage,
     e2eePendingRegistrationSubmitRequiredCode =>
       l10n.cloudSyncPendingRegistrationSubmitMessage,
+    e2eePendingRegistrationLoginRequiredCode =>
+      l10n.cloudSyncFailureRegistrationRecoveryLoginRequired,
     e2eePendingRegistrationUnsupportedCode =>
       l10n.cloudSyncPendingRegistrationUnsupportedMessage,
     e2eeAccountRecoveryUnsupportedCode =>

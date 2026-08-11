@@ -427,6 +427,32 @@ class AppLocalizationsZh extends AppLocalizations {
   String get cloudSyncFailureConflict => '数据已在其他设备发生变化，请重新同步。';
 
   @override
+  String get cloudSyncFailureAccountAlreadyRegistered =>
+      '该账号已注册，请直接登录；若所有可信设备均不可用，请使用账户恢复。';
+
+  @override
+  String get cloudSyncFailureRegistrationRecoveryLoginRequired =>
+      '已保存的注册事务已过期。请登录，成功后会自动清理该事务；若所有可信设备均不可用，请使用账户恢复。';
+
+  @override
+  String get cloudSyncFailureDevicePairingConflict => '登录审批状态已变化，请重新登录。';
+
+  @override
+  String get cloudSyncFailureAccountRecoveryStateConflict =>
+      '账户恢复状态已变化，请重新开始账户恢复。';
+
+  @override
+  String get cloudSyncFailureAccountRecoveryExpired => '账户恢复请求已过期，请重新开始账户恢复。';
+
+  @override
+  String get cloudSyncFailureAccountRecoveryDeviceAlreadyAuthenticated =>
+      '当前设备已是该账号的可信设备，请直接登录，无需恢复账户。';
+
+  @override
+  String get cloudSyncFailureSessionAlreadyActive =>
+      '当前已有账号会话，请先退出，再登录、注册或恢复其他账号。';
+
+  @override
   String get cloudSyncFailureValidation => '部分同步数据或输入不符合要求。';
 
   @override
@@ -6480,6 +6506,32 @@ class AppLocalizationsZhHans extends AppLocalizationsZh {
 
   @override
   String get cloudSyncFailureConflict => '数据已在其他设备发生变化，请重新同步。';
+
+  @override
+  String get cloudSyncFailureAccountAlreadyRegistered =>
+      '该账号已注册，请直接登录；若所有可信设备均不可用，请使用账户恢复。';
+
+  @override
+  String get cloudSyncFailureRegistrationRecoveryLoginRequired =>
+      '已保存的注册事务已过期。请登录，成功后会自动清理该事务；若所有可信设备均不可用，请使用账户恢复。';
+
+  @override
+  String get cloudSyncFailureDevicePairingConflict => '登录审批状态已变化，请重新登录。';
+
+  @override
+  String get cloudSyncFailureAccountRecoveryStateConflict =>
+      '账户恢复状态已变化，请重新开始账户恢复。';
+
+  @override
+  String get cloudSyncFailureAccountRecoveryExpired => '账户恢复请求已过期，请重新开始账户恢复。';
+
+  @override
+  String get cloudSyncFailureAccountRecoveryDeviceAlreadyAuthenticated =>
+      '当前设备已是该账号的可信设备，请直接登录，无需恢复账户。';
+
+  @override
+  String get cloudSyncFailureSessionAlreadyActive =>
+      '当前已有账号会话，请先退出，再登录、注册或恢复其他账号。';
 
   @override
   String get cloudSyncFailureValidation => '部分同步数据或输入不符合要求。';
@@ -12536,6 +12588,32 @@ class AppLocalizationsZhHant extends AppLocalizationsZh {
 
   @override
   String get cloudSyncFailureConflict => '資料已在其他裝置發生變化，請重新同步。';
+
+  @override
+  String get cloudSyncFailureAccountAlreadyRegistered =>
+      '此帳號已註冊，請直接登入；若所有受信任裝置均無法使用，請使用帳號復原。';
+
+  @override
+  String get cloudSyncFailureRegistrationRecoveryLoginRequired =>
+      '已儲存的註冊工作階段已過期。請登入，成功後會自動清理；若所有受信任裝置均無法使用，請使用帳號復原。';
+
+  @override
+  String get cloudSyncFailureDevicePairingConflict => '登入核准狀態已變更，請重新登入。';
+
+  @override
+  String get cloudSyncFailureAccountRecoveryStateConflict =>
+      '帳號復原狀態已變更，請重新開始帳號復原。';
+
+  @override
+  String get cloudSyncFailureAccountRecoveryExpired => '帳號復原請求已過期，請重新開始帳號復原。';
+
+  @override
+  String get cloudSyncFailureAccountRecoveryDeviceAlreadyAuthenticated =>
+      '目前裝置已是此帳號的受信任裝置，請直接登入，無需復原帳號。';
+
+  @override
+  String get cloudSyncFailureSessionAlreadyActive =>
+      '目前已有帳號工作階段，請先登出，再登入、註冊或復原其他帳號。';
 
   @override
   String get cloudSyncFailureValidation => '部分同步資料或輸入不符合要求。';

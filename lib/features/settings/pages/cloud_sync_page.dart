@@ -979,16 +979,16 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
       );
       return;
     }
+    final error =
+        provider.lastError ??
+        const CloudSyncException(
+          kind: CloudSyncFailureKind.unknown,
+          retryable: false,
+        );
+    _selectSignInForRegistrationFailure(error);
     showAppSnackBar(
       context,
-      message: cloudSyncFailureText(
-        l10n,
-        provider.lastError ??
-            const CloudSyncException(
-              kind: CloudSyncFailureKind.unknown,
-              retryable: false,
-            ),
-      ),
+      message: cloudSyncFailureText(l10n, error),
       type: NotificationType.error,
     );
   }
@@ -1113,16 +1113,16 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
       );
       return;
     }
+    final error =
+        provider.lastError ??
+        const CloudSyncException(
+          kind: CloudSyncFailureKind.unknown,
+          retryable: false,
+        );
+    _selectSignInForRegistrationFailure(error);
     showAppSnackBar(
       context,
-      message: cloudSyncFailureText(
-        AppLocalizations.of(context)!,
-        provider.lastError ??
-            const CloudSyncException(
-              kind: CloudSyncFailureKind.unknown,
-              retryable: false,
-            ),
-      ),
+      message: cloudSyncFailureText(AppLocalizations.of(context)!, error),
       type: NotificationType.error,
     );
   }
@@ -1175,6 +1175,19 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
   bool get _registrationSelected {
     return _supportsRegistration &&
         _authenticationMode == _CloudSyncAuthenticationMode.register;
+  }
+
+  void _selectSignInForRegistrationFailure(CloudSyncException error) {
+    final serverCode = error.serverCode;
+    if (serverCode != 'AUTH_REGISTRATION_CONFLICT' &&
+        serverCode != e2eePendingRegistrationLoginRequiredCode) {
+      return;
+    }
+    _recoveryPassphraseController.clear();
+    _recoveryPassphraseConfirmController.clear();
+    if (_authenticationMode != _CloudSyncAuthenticationMode.signIn) {
+      setState(() => _authenticationMode = _CloudSyncAuthenticationMode.signIn);
+    }
   }
 
   void _selectAuthenticationMode(_CloudSyncAuthenticationMode mode) {

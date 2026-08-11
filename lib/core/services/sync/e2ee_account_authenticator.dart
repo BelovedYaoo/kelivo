@@ -84,6 +84,8 @@ const e2eePendingRegistrationExportRequiredCode =
     'SYNC_REGISTRATION_RECOVERY_EXPORT_REQUIRED';
 const e2eePendingRegistrationSubmitRequiredCode =
     'SYNC_REGISTRATION_RECOVERY_SUBMIT_REQUIRED';
+const e2eePendingRegistrationLoginRequiredCode =
+    'SYNC_REGISTRATION_RECOVERY_LOGIN_REQUIRED';
 const e2eePendingRegistrationMissingCode = 'SYNC_REGISTRATION_RECOVERY_MISSING';
 const e2eePendingRegistrationUnsupportedCode =
     'SYNC_REGISTRATION_RECOVERY_UNSUPPORTED';
@@ -622,7 +624,7 @@ final class E2eeAccountAuthenticator
           ? CloudSyncException(
               kind: CloudSyncFailureKind.unauthenticated,
               retryable: false,
-              serverCode: 'SYNC_REGISTRATION_RECOVERY_LOGIN_REQUIRED',
+              serverCode: e2eePendingRegistrationLoginRequiredCode,
               requestId: error.requestId,
               statusCode: error.statusCode,
             )

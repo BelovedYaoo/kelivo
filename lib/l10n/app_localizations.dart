@@ -904,6 +904,48 @@ abstract class AppLocalizations {
   /// **'The data changed on another device. Sync again to reconcile it.'**
   String get cloudSyncFailureConflict;
 
+  /// No description provided for @cloudSyncFailureAccountAlreadyRegistered.
+  ///
+  /// In en, this message translates to:
+  /// **'This account is already registered. Sign in, or use account recovery if no trusted device is available.'**
+  String get cloudSyncFailureAccountAlreadyRegistered;
+
+  /// No description provided for @cloudSyncFailureRegistrationRecoveryLoginRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'The saved registration attempt expired. Sign in to clear it; if no trusted device is available, use account recovery.'**
+  String get cloudSyncFailureRegistrationRecoveryLoginRequired;
+
+  /// No description provided for @cloudSyncFailureDevicePairingConflict.
+  ///
+  /// In en, this message translates to:
+  /// **'The sign-in approval state changed. Sign in again.'**
+  String get cloudSyncFailureDevicePairingConflict;
+
+  /// No description provided for @cloudSyncFailureAccountRecoveryStateConflict.
+  ///
+  /// In en, this message translates to:
+  /// **'The account recovery state changed. Start account recovery again.'**
+  String get cloudSyncFailureAccountRecoveryStateConflict;
+
+  /// No description provided for @cloudSyncFailureAccountRecoveryExpired.
+  ///
+  /// In en, this message translates to:
+  /// **'The account recovery request expired. Start account recovery again.'**
+  String get cloudSyncFailureAccountRecoveryExpired;
+
+  /// No description provided for @cloudSyncFailureAccountRecoveryDeviceAlreadyAuthenticated.
+  ///
+  /// In en, this message translates to:
+  /// **'This device is already trusted for this account. Sign in directly; account recovery is not needed.'**
+  String get cloudSyncFailureAccountRecoveryDeviceAlreadyAuthenticated;
+
+  /// No description provided for @cloudSyncFailureSessionAlreadyActive.
+  ///
+  /// In en, this message translates to:
+  /// **'An account session is already active. Sign out before signing in, registering, or recovering another account.'**
+  String get cloudSyncFailureSessionAlreadyActive;
+
   /// No description provided for @cloudSyncFailureValidation.
   ///
   /// In en, this message translates to:

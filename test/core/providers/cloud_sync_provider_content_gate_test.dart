@@ -59,6 +59,7 @@ import 'package:Kelivo/core/services/workspace/device_state_blob_store.dart';
 import 'package:Kelivo/core/services/workspace/installation_operation_lease.dart';
 import 'package:Kelivo/core/services/workspace/local_cryptographic_wipe.dart';
 import 'package:Kelivo/core/services/workspace/local_wipe_marker_topology.dart';
+import 'package:Kelivo/features/settings/pages/cloud_sync_failure_text.dart';
 import 'package:Kelivo/features/settings/pages/cloud_sync_page.dart'
     hide CloudSyncPage;
 import 'package:Kelivo/features/settings/pages/mobile_account_recovery_page.dart';
@@ -113,6 +114,36 @@ extension _DeviceStateBlobStoreTestSetup on DeviceStateBlobStore {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('账号协议错误映射为可执行提示并保留未知冲突兜底', () {
+    final l10n = lookupAppLocalizations(const Locale('zh'));
+    const expectedByCode = <String, String>{
+      'AUTH_REGISTRATION_CONFLICT': '该账号已注册，请直接登录；若所有可信设备均不可用，请使用账户恢复。',
+      e2eePendingRegistrationLoginRequiredCode:
+          '已保存的注册事务已过期。请登录，成功后会自动清理该事务；若所有可信设备均不可用，请使用账户恢复。',
+      'AUTH_DEVICE_PAIRING_CONFLICT': '登录审批状态已变化，请重新登录。',
+      'ACCOUNT_RECOVERY_STATE_CONFLICT': '账户恢复状态已变化，请重新开始账户恢复。',
+      'ACCOUNT_RECOVERY_EXPIRED': '账户恢复请求已过期，请重新开始账户恢复。',
+      'SYNC_ACCOUNT_RECOVERY_AUTH_GENERATION_INVALID': '账户恢复状态已变化，请重新开始账户恢复。',
+      'SYNC_ACCOUNT_RECOVERY_DEVICE_ALREADY_AUTHENTICATED':
+          '当前设备已是该账号的可信设备，请直接登录，无需恢复账户。',
+      'SYNC_SESSION_ALREADY_ACTIVE': '当前已有账号会话，请先退出，再登录、注册或恢复其他账号。',
+    };
+
+    String failureText(String? serverCode) => cloudSyncFailureText(
+      l10n,
+      CloudSyncException(
+        kind: CloudSyncFailureKind.conflict,
+        retryable: false,
+        serverCode: serverCode,
+      ),
+    );
+
+    for (final entry in expectedByCode.entries) {
+      expect(failureText(entry.key), entry.value, reason: entry.key);
+    }
+    expect(failureText('UNRECOGNIZED_CONFLICT'), '数据已在其他设备发生变化，请重新同步。');
+  });
 
   test('E2EE 同步周期按有界拉取、封装、发送和最终拉取执行', () async {
     final events = <String>[];
@@ -3935,6 +3966,100 @@ void main() {
     debugDefaultTargetPlatformOverride = null;
   });
 
+  testWidgets('过期注册续提切回登录并给出可执行提示', (tester) async {
+    tester.view.physicalSize = const Size(1000, 1800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    _setCloudSyncPackageInfo();
+    final authentication = _FakeE2eeAccountAuthentication(
+      registrationFailure: const CloudSyncException(
+        kind: CloudSyncFailureKind.conflict,
+        retryable: false,
+        serverCode: e2eePendingRegistrationSubmitRequiredCode,
+      ),
+      resumeRegistrationFailure: const CloudSyncException(
+        kind: CloudSyncFailureKind.unauthenticated,
+        retryable: false,
+        serverCode: e2eePendingRegistrationLoginRequiredCode,
+      ),
+    );
+    final fixture = await tester.runAsync(
+      () => _createSignedOutFixture(authentication: authentication),
+    );
+    if (fixture == null) {
+      throw StateError('expired_registration_resume_fixture_not_created');
+    }
+    addTearDown(() => tester.runAsync(fixture.close));
+    await tester.runAsync(fixture.provider.initialize);
+    await tester.pumpWidget(_cloudSyncTestApp(fixture.provider));
+    await tester.pump();
+
+    await tester.tap(
+      find.byKey(const ValueKey<String>('cloud-sync-register-mode')),
+    );
+    await tester.pump();
+    await _enterCloudSyncField(tester, 'cloud-sync-login-name-field', 'ovo');
+    await _enterCloudSyncField(tester, 'cloud-sync-display-name-field', 'Ovo');
+    await _enterCloudSyncField(tester, 'cloud-sync-password-field', 'password');
+    await _enterCloudSyncField(
+      tester,
+      'cloud-sync-recovery-passphrase-field',
+      'correct horse battery staple',
+    );
+    await _enterCloudSyncField(
+      tester,
+      'cloud-sync-recovery-passphrase-confirm-field',
+      'correct horse battery staple',
+    );
+    await _enterCloudSyncField(tester, 'cloud-sync-device-name-field', '安卓手机');
+    await tester.tap(
+      find.byKey(const ValueKey<String>('cloud-sync-authentication-submit')),
+    );
+    await _pumpCloudSyncUntil(
+      tester,
+      () => find
+          .byKey(
+            const ValueKey<String>('cloud-sync-pending-registration-resume'),
+          )
+          .evaluate()
+          .isNotEmpty,
+    );
+
+    tester
+        .widget<IosTileButton>(
+          find.byKey(
+            const ValueKey<String>('cloud-sync-pending-registration-resume'),
+          ),
+        )
+        .onTap
+        .call();
+    await tester.pump();
+    await _pumpCloudSyncUntil(
+      tester,
+      () =>
+          fixture.provider.lastError?.serverCode ==
+          e2eePendingRegistrationLoginRequiredCode,
+    );
+    await tester.pump();
+
+    expect(authentication.requestNames, <String>[
+      'register',
+      'resume-registration',
+    ]);
+    expect(
+      find.byKey(const ValueKey<String>('cloud-sync-display-name-field')),
+      findsNothing,
+    );
+    await _expectAndDismissCloudSyncToast(
+      tester,
+      '已保存的注册事务已过期。请登录，成功后会自动清理该事务；若所有可信设备均不可用，请使用账户恢复。',
+    );
+    debugDefaultTargetPlatformOverride = null;
+  });
+
   testWidgets('本次确认恢复介质后的提交错误不弹历史事务对话框', (tester) async {
     tester.view.physicalSize = const Size(1000, 1800);
     tester.view.devicePixelRatio = 1;
@@ -4078,7 +4203,11 @@ void main() {
       fixture.provider.lastError?.serverCode,
       'AUTH_REGISTRATION_CONFLICT',
     );
-    expect(find.text('数据已在其他设备发生变化，请重新同步。'), findsWidgets);
+    expect(find.text('该账号已注册，请直接登录；若所有可信设备均不可用，请使用账户恢复。'), findsWidgets);
+    expect(
+      find.byKey(const ValueKey<String>('cloud-sync-display-name-field')),
+      findsNothing,
+    );
     debugDefaultTargetPlatformOverride = null;
   });
 
@@ -7944,6 +8073,7 @@ final class _FakeE2eeAccountAuthentication
     _FakeE2eeDevicePairingSession? pairingSession,
     this.loginFailure,
     this.registrationFailure,
+    this.resumeRegistrationFailure,
     this.confirmationFailure,
     this.registrationBarrier,
     this.exportRecoveryMediaBeforeFailure = false,
@@ -7958,6 +8088,7 @@ final class _FakeE2eeAccountAuthentication
   final _FakeE2eeDevicePairingSession pairingSession;
   final Object? loginFailure;
   final Object? registrationFailure;
+  final Object? resumeRegistrationFailure;
   final Object? confirmationFailure;
   final Future<void>? registrationBarrier;
   final bool exportRecoveryMediaBeforeFailure;
@@ -8038,6 +8169,8 @@ final class _FakeE2eeAccountAuthentication
   }) async {
     requestNames.add('resume-registration');
     lastLoginName = loginName;
+    final failure = resumeRegistrationFailure;
+    if (failure != null) throw failure;
     return registrationSession;
   }
 
