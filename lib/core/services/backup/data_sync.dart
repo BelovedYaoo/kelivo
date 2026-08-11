@@ -1323,13 +1323,8 @@ class DataSync {
             final databaseFile = File(
               p.join(extractDir.path, _databaseEntryName),
             );
-            if (mode == RestoreMode.overwrite) {
-              deferredVersionedDatabaseFile = databaseFile;
-            } else {
-              _lastMergeReport = await chatService.mergeDatabaseSnapshot(
-                databaseFile,
-              );
-            }
+            // 合并与覆盖都在文件恢复后写库，避免旧绝对路径进入同步意图。
+            deferredVersionedDatabaseFile = databaseFile;
           }
           var conversations = const <Conversation>[];
           var messages = const <ChatMessage>[];
@@ -1902,10 +1897,17 @@ class DataSync {
                     imagesDirectory: await _getImagesDir(),
                   )
                 : null;
-            await chatService.replaceDatabaseSnapshotFromBackup(
-              databaseFile,
-              attachmentDirectories: attachmentDirectories,
-            );
+            if (mode == RestoreMode.overwrite) {
+              await chatService.replaceDatabaseSnapshotFromBackup(
+                databaseFile,
+                attachmentDirectories: attachmentDirectories,
+              );
+            } else {
+              _lastMergeReport = await chatService.mergeDatabaseSnapshot(
+                databaseFile,
+                attachmentDirectories: attachmentDirectories,
+              );
+            }
           }
           final mcpServers = pendingMcpServers;
           if (mcpServers != null) {

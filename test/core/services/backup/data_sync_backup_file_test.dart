@@ -96,6 +96,41 @@ final class _RecordingSyncWriteExecutor implements SyncWriteExecutor {
   }
 }
 
+final class _AttachmentVerifyingImportExecutor
+    implements ImportSyncWriteExecutor {
+  _AttachmentVerifyingImportExecutor(this.verifyAttachmentBatch);
+
+  final Future<void> Function(List<String> revisionIds) verifyAttachmentBatch;
+  final List<List<String>> attachmentBatches = <List<String>>[];
+
+  @override
+  Future<T> runLocal<T>({
+    required SyncEntityKey key,
+    required Future<T> Function() write,
+  }) => write();
+
+  @override
+  Future<T> runLocalBatch<T>({
+    required Iterable<SyncEntityKey> keys,
+    required Future<T> Function() write,
+  }) => write();
+
+  @override
+  Future<T> runLocalImportBatches<T>({
+    required Stream<List<SyncEntityKey>> keyBatches,
+    required Stream<List<String>> attachmentRevisionBatches,
+    required Future<T> Function() write,
+  }) async {
+    await keyBatches.drain<void>();
+    final result = await write();
+    await for (final batch in attachmentRevisionBatches) {
+      attachmentBatches.add(List<String>.unmodifiable(batch));
+      await verifyAttachmentBatch(batch);
+    }
+    return result;
+  }
+}
+
 class _FailingRemovePreferencesStore extends InMemorySharedPreferencesStore {
   _FailingRemovePreferencesStore(super.data) : super.withData();
 
@@ -308,10 +343,21 @@ Future<File> _createSqliteBackupFixture({
   bool includeFiles = false,
   String? assetContent,
   bool legacySchema12 = false,
+  bool structuredAttachment = false,
 }) async {
   if (assetContent != null && !includeFiles) {
     throw ArgumentError.value(assetContent, 'assetContent');
   }
+  if (structuredAttachment && assetContent == null) {
+    throw ArgumentError.value(assetContent, 'structuredAttachment');
+  }
+  final assetFile = assetContent == null
+      ? null
+      : await File(
+          '${root.path}/${prefix}_asset.txt',
+        ).writeAsString(assetContent, flush: true);
+  final assetBytes = await assetFile?.length();
+  final assetHash = assetFile == null ? null : await _fileSha256(assetFile);
   final databasePath = '${root.path}/${prefix}_database.sqlite';
   final snapshotInfo = await Isolate.run(() async {
     final databaseFile = File(databasePath);
@@ -339,6 +385,19 @@ Future<File> _createSqliteBackupFixture({
                         r'[file:C:\old-device\workspace\upload\fixture.txt|fixture.txt|text/plain]'
                   : 'fixture content',
               conversationId: 'fixture-conversation',
+              attachments: structuredAttachment
+                  ? <ChatMessageAttachment>[
+                      ChatMessageAttachment(
+                        assetId: 'fixture-asset',
+                        path: r'C:\old-device\workspace\upload\fixture.txt',
+                        contentHash: assetHash!,
+                        byteSize: assetBytes!,
+                        kind: 'file',
+                        displayName: 'fixture.txt',
+                        mediaType: 'text/plain',
+                      ),
+                    ]
+                  : const <ChatMessageAttachment>[],
             ),
             messageOrder: 0,
           ),
@@ -392,11 +451,6 @@ Future<File> _createSqliteBackupFixture({
   final databaseFile = File(databasePath);
   final settingsFile = File('${root.path}/${prefix}_settings.json');
   await settingsFile.writeAsString(jsonEncode(settings));
-  final assetFile = assetContent == null
-      ? null
-      : await File(
-          '${root.path}/${prefix}_asset.txt',
-        ).writeAsString(assetContent, flush: true);
   final entries = <String, Map<String, Object>>{
     'settings.json': {
       'bytes': await settingsFile.length(),
@@ -1796,6 +1850,101 @@ void main() {
       expect(writeExecutor.batches, isNotEmpty);
       await _expectLegacyCloudSyncStateAbsent(root);
     });
+
+    test(
+      'merge remaps versioned attachment paths and stays idempotent',
+      () async {
+        final fixture = await _createSqliteBackupFixture(
+          root: root,
+          prefix: 'merge_attachment',
+          settings: const <String, dynamic>{},
+          includeFiles: true,
+          assetContent: 'versioned attachment',
+          structuredAttachment: true,
+        );
+        final observedAttachmentPaths = <String>[];
+        late final ChatService chatService;
+        final writeExecutor = _AttachmentVerifyingImportExecutor((
+          revisionIds,
+        ) async {
+          for (final revisionId in revisionIds) {
+            final message = await chatService.loadMessageForSync(revisionId);
+            if (message == null) throw StateError('imported_revision_missing');
+            for (final attachment in message.attachments) {
+              if (!await File(attachment.path).exists()) {
+                throw StateError('导入附件源文件缺失：${attachment.path}');
+              }
+              observedAttachmentPaths.add(attachment.path);
+            }
+          }
+        });
+        chatService = ChatService(writeExecutor);
+        await chatService.init();
+        addTearDown(chatService.close);
+        final sync = DataSync(chatService: chatService);
+
+        await sync.restoreLocalFile(
+          fixture,
+          const LocalBackupOptions(includeChats: true, includeFiles: true),
+          mode: RestoreMode.merge,
+        );
+
+        final first = (await chatService.loadMessages(
+          'fixture-conversation',
+        )).single;
+        final expectedPath = p.join(root.path, 'upload', 'fixture.txt');
+        expect(first.attachments.single.path, expectedPath);
+        expect(await File(expectedPath).readAsString(), 'versioned attachment');
+        expect(observedAttachmentPaths, <String>[expectedPath]);
+        expect(writeExecutor.attachmentBatches, <List<String>>[
+          <String>['fixture-message'],
+        ]);
+
+        await sync.restoreLocalFile(
+          fixture,
+          const LocalBackupOptions(includeChats: true, includeFiles: true),
+          mode: RestoreMode.merge,
+        );
+
+        expect(sync.lastMergeReport?.importedConversations, 0);
+        expect(sync.lastMergeReport?.deduplicatedConversations, 1);
+        expect(chatService.getAllCompleteConversations(), hasLength(1));
+      },
+    );
+
+    test(
+      'merge rejects a conflicting versioned attachment atomically',
+      () async {
+        final fixture = await _createSqliteBackupFixture(
+          root: root,
+          prefix: 'merge_attachment_conflict',
+          settings: const <String, dynamic>{},
+          includeFiles: true,
+          assetContent: 'backup attachment',
+          structuredAttachment: true,
+        );
+        final target = File(p.join(root.path, 'upload', 'fixture.txt'));
+        await target.parent.create(recursive: true);
+        await target.writeAsString('different local attachment', flush: true);
+        final chatService = ChatService(
+          const UntrackedSyncWriteExecutor.forTests(),
+        );
+        await chatService.init();
+        addTearDown(chatService.close);
+
+        await expectLater(
+          DataSync(chatService: chatService).restoreLocalFile(
+            fixture,
+            const LocalBackupOptions(includeChats: true, includeFiles: true),
+            mode: RestoreMode.merge,
+          ),
+          throwsA(isA<StateError>()),
+        );
+
+        expect(chatService.getConversation('fixture-conversation'), isNull);
+        expect(await target.readAsString(), 'different local attachment');
+      },
+    );
 
     test(
       'merge settings rolls back every key when a later write fails',

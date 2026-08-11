@@ -174,7 +174,7 @@ Future<void> main() async {
       try {
         await KelivoDurablePreferences.registerForCurrentPlatform();
         // 服务器选择存于匿名工作区，但账号工作区尚未确定偏好前缀；
-        // 直接读取平台存储，避免提前创建 legacy SharedPreferences 单例。
+        // 直接读取平台存储，避免提前创建 legacy 偏好单例。
         cloudSyncBaseUrlOverride =
             await loadCloudSyncBaseUrlOverrideBeforeWorkspaceBootstrap();
         mobileBackgroundSyncScheduler =

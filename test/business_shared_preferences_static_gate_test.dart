@@ -29,10 +29,13 @@ void main() {
         'lib/core/services/learning_mode_store.dart',
         'lib/core/services/memory_store.dart',
         'lib/core/services/quick_phrase_store.dart',
+        // 云同步服务器选择是设备本地偏好；启动前读取与设置页写入都不参与账号同步。
+        'lib/core/services/sync/cloud_sync_types.dart',
         'lib/core/services/workspace/account_workspace_runtime.dart',
         'lib/core/services/world_book_store.dart',
         'lib/desktop/window_size_manager.dart',
         'lib/features/home/services/file_upload_service.dart',
+        'lib/features/settings/pages/cloud_sync_page.dart',
       };
       final references = <String>[];
       await for (final entity in Directory('lib').list(recursive: true)) {

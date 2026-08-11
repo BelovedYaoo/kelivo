@@ -3597,14 +3597,22 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     return (byteSize: after.size, contentHash: contentHash);
   }
 
-  Future<BackupMergeReport> mergeDatabaseSnapshot(File snapshotFile) async {
+  Future<BackupMergeReport> mergeDatabaseSnapshot(
+    File snapshotFile, {
+    BackupAttachmentDirectoryMapping? attachmentDirectories,
+  }) async {
     if (!_initialized) await init();
     if (identical(Zone.current[_importBatchZoneKey], this) &&
         _activeRemoteBatchContext == null) {
       throw StateError('数据库快照合并不得嵌套在另一导入事务内');
     }
+    final directories = attachmentDirectories;
     final report = await _repo.mergeBackupSnapshot(
       snapshotFile,
+      resolveAttachmentPath: directories == null
+          ? null
+          : (sourcePath) =>
+                _resolveImportedAttachmentPath(sourcePath, directories).path,
       // merge 补入的新会话走同步意图（#112）：导入数据应推送到云端；
       // 本地已存在的数据不受影响（repository 按指纹去重合并）。
       onImportedBeforeCommit: (conversationIds) =>

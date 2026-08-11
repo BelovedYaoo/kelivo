@@ -5754,6 +5754,7 @@ LIMIT 1;
 
   Future<BackupMergeReport> mergeBackupSnapshot(
     File snapshotFile, {
+    String Function(String sourcePath)? resolveAttachmentPath,
     Future<void> Function(List<String> conversationIds)? onImportedBeforeCommit,
   }) async {
     if (!await snapshotFile.exists()) {
@@ -5845,6 +5846,7 @@ LIMIT 1;
             sourceId: sourceId,
             targetId: targetId,
             messageIdMap: messageIdMap,
+            resolveAttachmentPath: resolveAttachmentPath,
           );
           imported += 1;
           importedIds.add(targetId);
@@ -5957,7 +5959,9 @@ LIMIT 1;
         data,
         tool?.data['events_json'],
         signature?.data['signature'],
-        attachments.map((row) => row.data).toList(growable: false),
+        attachments
+            .map((row) => _normalizedAttachmentFingerprintData(row.data))
+            .toList(growable: false),
       ]);
     }
     return sha256
@@ -5992,6 +5996,26 @@ LIMIT 1;
         if (ordinal != null) selections['$ordinal'] = entry.value;
       }
       normalized['version_selections_json'] = selections;
+    }
+    return normalized;
+  }
+
+  Map<String, Object?> _normalizedAttachmentFingerprintData(
+    Map<String, Object?> data,
+  ) {
+    final normalized = Map<String, Object?>.from(data);
+    // 本地路径与上传身份会随跨安装导入变化；它们不是会话内容，
+    // 否则同一备份第二次合并会被误判为冲突。
+    for (final field in const <String>[
+      'path',
+      'attachment_id',
+      'upload_id',
+      'chunk_key_epoch',
+      'manifest_key_epoch',
+      'manifest_revision',
+      'thumbnail_path',
+    ]) {
+      normalized.remove(field);
     }
     return normalized;
   }
@@ -6057,6 +6081,7 @@ LIMIT 1;
     required String sourceId,
     required String targetId,
     required Map<String, String> messageIdMap,
+    required String Function(String sourcePath)? resolveAttachmentPath,
   }) async {
     final sourceMessages = await _db
         .customSelect(
@@ -6183,6 +6208,7 @@ LIMIT 1;
         sourceSchema: 'merge_source',
         sourceRevisionId: entry.key,
         targetRevisionId: entry.value,
+        resolveAttachmentPath: resolveAttachmentPath,
       );
     }
   }
@@ -6191,6 +6217,7 @@ LIMIT 1;
     required String sourceSchema,
     required String sourceRevisionId,
     required String targetRevisionId,
+    required String Function(String sourcePath)? resolveAttachmentPath,
   }) async {
     final rows = await _db
         .customSelect(
@@ -6209,39 +6236,75 @@ LIMIT 1;
       _db.messageRows,
     )..where((row) => row.id.equals(targetRevisionId))).getSingleOrNull();
     if (target == null) throw StateError('snapshot_attachment_target_missing');
+    final assets = <MessageAssetRegistration>[];
+    for (final row in rows) {
+      final sourcePath = row.read<String>('path');
+      final resolvedPath =
+          resolveAttachmentPath?.call(sourcePath) ?? sourcePath;
+      if (resolveAttachmentPath != null) {
+        await _verifyResolvedBackupAttachmentFile(
+          path: resolvedPath,
+          contentHash: row.read<String>('content_hash'),
+          byteSize: row.read<int>('byte_size'),
+          hasRemoteIdentity: row.readNullable<String>('attachment_id') != null,
+        );
+      }
+      assets.add(
+        MessageAssetRegistration(
+          assetId: row.read<String>('asset_id'),
+          contentHash: row.read<String>('content_hash'),
+          path: resolvedPath,
+          byteSize: row.read<int>('byte_size'),
+          kind: row.read<String>('kind'),
+          displayName: row.readNullable<String>('display_name'),
+          mediaType: row.readNullable<String>('media_type'),
+          attachmentId: row.readNullable<String>('attachment_id'),
+          uploadId: row.readNullable<String>('upload_id'),
+          chunkKeyEpoch: row.readNullable<int>('chunk_key_epoch'),
+          manifestKeyEpoch: row.readNullable<int>('manifest_key_epoch'),
+          manifestRevision: row.readNullable<int>('manifest_revision'),
+          width: row.readNullable<int>('width'),
+          height: row.readNullable<int>('height'),
+          // 缩略图不属于可移植附件身份，跨安装恢复后由当前设备重建。
+          thumbnailPath: resolveAttachmentPath == null
+              ? row.readNullable<String>('thumbnail_path')
+              : null,
+        ),
+      );
+    }
     final replaced = await replaceMessageAssetReferences(
       conversationId: target.conversationId,
       revisionId: targetRevisionId,
       expectedContent: target.content,
-      assets: <MessageAssetRegistration>[
-        for (final row in rows)
-          MessageAssetRegistration(
-            assetId: row.read<String>('asset_id'),
-            contentHash: row.read<String>('content_hash'),
-            path: row.read<String>('path'),
-            byteSize: row.read<int>('byte_size'),
-            kind: row.read<String>('kind'),
-            displayName: row.readNullable<String>('display_name'),
-            mediaType: row.readNullable<String>('media_type'),
-            attachmentId: row.readNullable<String>('attachment_id'),
-            uploadId: row.readNullable<String>('upload_id'),
-            chunkKeyEpoch: row.readNullable<int>('chunk_key_epoch'),
-            manifestKeyEpoch: row.readNullable<int>('manifest_key_epoch'),
-            manifestRevision: row.readNullable<int>('manifest_revision'),
-            width: row.readNullable<int>('width'),
-            height: row.readNullable<int>('height'),
-            thumbnailPath: row.readNullable<String>('thumbnail_path'),
-          ),
-      ],
+      assets: assets,
     );
     if (!replaced) throw StateError('snapshot_attachment_target_changed');
   }
 
-  Future<int> _attachedTableCount(String schema, String table) async {
-    final row = await _db
-        .customSelect('SELECT COUNT(*) AS count FROM $schema.$table;')
-        .getSingle();
-    return row.read<int>('count');
+  Future<void> _verifyResolvedBackupAttachmentFile({
+    required String path,
+    required String contentHash,
+    required int byteSize,
+    required bool hasRemoteIdentity,
+  }) async {
+    final type = await FileSystemEntity.type(path, followLinks: false);
+    if (type == FileSystemEntityType.notFound && hasRemoteIdentity) return;
+    if (type != FileSystemEntityType.file) {
+      throw StateError('backup_attachment_file_missing');
+    }
+    final file = File(path);
+    final before = await file.stat();
+    if (before.size != byteSize) {
+      throw StateError('backup_attachment_file_size');
+    }
+    final actualHash = (await sha256.bind(file.openRead()).first).toString();
+    final after = await file.stat();
+    if (before.size != after.size || before.modified != after.modified) {
+      throw StateError('backup_attachment_file_changed');
+    }
+    if (actualHash != contentHash) {
+      throw StateError('backup_attachment_file_hash');
+    }
   }
 
   Future<void> _writeBackupData({
