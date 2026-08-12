@@ -20,6 +20,8 @@ final class BackupSettingsValidator {
     'backup_reminder_minutes_of_day_v1',
     'backup_reminder_enabled_at_v1',
     'backup_reminder_last_backup_at_v1',
+    // 服务器选择锚定安装的匿名命名空间，不能随业务设置跨服务器迁移。
+    'cloud_sync_base_url_override',
   };
   static const _jsonListKeys = {
     'assistants_v1',

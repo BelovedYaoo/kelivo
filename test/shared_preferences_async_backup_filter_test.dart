@@ -14,6 +14,7 @@ void main() {
         'display_auto_scroll_enabled_v1': false,
         'desktop_hotkeys_commands_v1': ['close_window=cmd+w'],
         'desktop_hotkeys_enabled_v1': ['close_window=1'],
+        'cloud_sync_base_url_override': 'https://backup.example.com',
       });
 
       final prefs = await backup_sync.SharedPreferencesAsync.instance;
@@ -22,6 +23,7 @@ void main() {
       expect(snapshot.containsKey('display_chat_font_scale_v1'), isFalse);
       expect(snapshot.containsKey('desktop_hotkeys_commands_v1'), isFalse);
       expect(snapshot.containsKey('desktop_hotkeys_enabled_v1'), isFalse);
+      expect(snapshot.containsKey('cloud_sync_base_url_override'), isFalse);
       expect(snapshot['display_auto_scroll_enabled_v1'], isFalse);
     });
 
@@ -53,16 +55,22 @@ void main() {
       () async {
         SharedPreferences.setMockInitialValues({
           'display_chat_font_scale_v1': 1.15,
+          'cloud_sync_base_url_override': 'https://current.example.com',
         });
 
         final prefs = await backup_sync.SharedPreferencesAsync.instance;
         await prefs.restore({
           'display_chat_font_scale_v1': 1.4,
           'display_auto_scroll_enabled_v1': false,
+          'cloud_sync_base_url_override': 'https://backup.example.com',
         });
 
         final raw = await SharedPreferences.getInstance();
         expect(raw.getDouble('display_chat_font_scale_v1'), 1.15);
+        expect(
+          raw.getString('cloud_sync_base_url_override'),
+          'https://current.example.com',
+        );
         expect(raw.getBool('display_auto_scroll_enabled_v1'), isFalse);
       },
     );

@@ -1279,7 +1279,10 @@ class DataSync {
       if (versionedBackup != null) {
         final includeChats = versionedBackup.includeChats;
         final includeFiles = versionedBackup.includeFiles;
+        // 账号数据库同时承载成员信任锚和同步账本；含聊天的覆盖恢复只能
+        // 事务化替换业务聊天表，不能通过冷启动切换整个数据库文件。
         if (mode == RestoreMode.overwrite &&
+            (!restoreChats || !AppDirectories.isAccountWorkspace) &&
             !versionedBackup.requiresLiveChatImport) {
           final appDataPath = (await AppDirectories.getAppDataDirectory()).path;
           final extractedPath = extractDir.path;

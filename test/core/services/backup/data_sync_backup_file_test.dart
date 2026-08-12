@@ -28,6 +28,7 @@ import 'package:Kelivo/core/services/chat/chat_service.dart' as production_chat;
 import 'package:Kelivo/core/services/sync/cloud_sync_state_retirement.dart';
 import 'package:Kelivo/core/services/sync/sync_codec.dart';
 import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
+import 'package:Kelivo/utils/app_directories.dart';
 
 import 'restore_cold_process_test_helper.dart';
 import '../../database/test_database_cipher.dart';
@@ -525,6 +526,11 @@ void main() {
     setUp(() async {
       root = await Directory.systemTemp.createTemp('kelivo_data_sync_test_');
       PathProviderPlatform.instance = _FakePathProviderPlatform(root.path);
+      AppDirectories.bindWorkspaceRoot(
+        root,
+        installationRoot: root,
+        accountWorkspace: false,
+      );
       PackageInfo.setMockInitialValues(
         appName: 'Kelivo',
         packageName: 'Kelivo',
@@ -1246,6 +1252,80 @@ void main() {
         'signature',
       );
     });
+
+    test(
+      'account workspace restores chats live without replacing account state',
+      () async {
+        final zipFile = await _createSqliteBackupFixture(
+          root: root,
+          prefix: 'account_workspace_live_restore',
+          settings: const <String, dynamic>{},
+        );
+        AppDirectories.bindWorkspaceRoot(
+          root,
+          installationRoot: root,
+          accountWorkspace: true,
+        );
+        final writeExecutor = _RecordingSyncWriteExecutor();
+        final gateway = ChatDatabaseGateway(cipher: testDatabaseCipher);
+        final chatService = ChatService(
+          writeExecutor,
+          databaseGateway: gateway,
+        );
+        await chatService.init();
+        addTearDown(chatService.close);
+        final existing = await chatService.createConversation(
+          title: 'Existing',
+        );
+        final controlLease = await gateway.acquire(
+          File(p.join(root.path, AppDatabase.databaseFileName)),
+        );
+        addTearDown(controlLease.release);
+        final pullCommands = controlLease.repository.e2eeSyncPullCommands;
+        final initialCheckpoint = await pullCommands.readOrCreate(
+          accountUserId: '00000000-0000-4000-8000-000000000001',
+          now: DateTime.utc(2026, 7, 9),
+        );
+        await pullCommands.enterSnapshot(
+          expected: initialCheckpoint,
+          snapshotRunId: '00000000-0000-4000-8000-000000000002',
+          now: DateTime.utc(2026, 7, 9, 0, 1),
+        );
+        writeExecutor.batches.clear();
+
+        await DataSync(chatService: chatService).restoreLocalFile(
+          zipFile,
+          const LocalBackupOptions(includeChats: true, includeFiles: false),
+        );
+
+        await _expectLegacyCloudSyncStateAbsent(root);
+        expect(chatService.getConversation(existing.id), isNull);
+        expect(
+          await RestoreStartupGate.inspect(appDataDirectory: root),
+          isNull,
+        );
+        expect(
+          chatService.getConversation('fixture-conversation')?.title,
+          'Fixture',
+        );
+        expect(
+          (await chatService.loadMessages(
+            'fixture-conversation',
+          )).single.content,
+          'fixture content',
+        );
+        final preservedCheckpoint = await pullCommands.readOrCreate(
+          accountUserId: '00000000-0000-4000-8000-000000000001',
+          now: DateTime.utc(2026, 7, 9, 0, 2),
+        );
+        expect(preservedCheckpoint.phase.name, 'snapshot');
+        expect(
+          preservedCheckpoint.snapshotRunId,
+          '00000000-0000-4000-8000-000000000002',
+        );
+        expect(writeExecutor.batches, isNotEmpty);
+      },
+    );
 
     test(
       'imports a plaintext schema 12 backup into the live database',
