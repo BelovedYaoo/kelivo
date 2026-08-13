@@ -593,6 +593,315 @@ void main() {
     );
   });
 
+  test('proofReady 服务端授权已过期时删除旧事务并重新授权', () async {
+    final fixture = _readyRecoveryFixture();
+    final callOrder = <String>[];
+    final oldRecoveryToken = CloudSyncAccountRecoveryToken.generate();
+    final newRecoveryToken = CloudSyncAccountRecoveryToken.parse(
+      'kelivo_recovery_${base64Url.encode(_bytes(32, 0x75)).replaceAll('=', '')}',
+    );
+    final checkpointPersistence = _MemoryCheckpointPersistence(
+      callOrder,
+      initialCheckpoint:
+          E2eeAccountRecoveryCheckpoint.challenged(
+            expectedDeviceId: _uuid(5),
+            recoveryToken: oldRecoveryToken,
+            challenge: fixture.challenge,
+          ).withProof(
+            nonceProof: _bytes(32, 0x81),
+            trustSignature: _bytes(64, 0x82),
+          ),
+    );
+    final transport = _FakeRecoveryTransport(
+      challenge: fixture.challenge,
+      historyPages: <CloudSyncAccountSecurityHistoryPage>[fixture.historyPage],
+      callOrder: callOrder,
+      authorizedState: E2eeAccountRecoveryAuthorizedState(
+        attemptId: fixture.challenge.attemptId,
+        authorizedAt: DateTime.utc(2026, 8, 1),
+        recoveryTokenExpiresAt: DateTime.utc(2026, 8, 1, 0, 20),
+        status: E2eeAccountRecoveryRemoteStatus.authorized,
+        nextAction: E2eeAccountRecoveryNextAction.recoverReplace,
+        securityState: _securityStateForFixture(fixture),
+        dataState: fixture.challenge.dataState,
+      ),
+    );
+    final passphrase = Uint8List.fromList(utf8.encode('correct horse battery'));
+    final authorizer = E2eeAccountRecoveryAuthorizer(
+      transport: transport,
+      proofCore: _FakeRecoveryProofCore(callOrder),
+      checkpointPersistence: checkpointPersistence,
+      serviceOriginSha256: _bytes(32, 0x61),
+      attemptIdFactory: () => fixture.challenge.attemptId,
+      recoveryTokenFactory: () => newRecoveryToken,
+      now: () => DateTime.utc(2026, 8, 1, 0, 30),
+    );
+
+    final authorized = await authorizer.authorize(
+      onboardingToken: CloudSyncOnboardingToken.parse(
+        'kelivo_onboarding_${base64Url.encode(_bytes(32, 0x72)).replaceAll('=', '')}',
+      ),
+      expectedDeviceId: _uuid(5),
+      recoveryMedia: _bytes(676, 0x73),
+      recoveryPassphrase: passphrase,
+    );
+
+    expect(callOrder, <String>[
+      'checkpoint:read',
+      'state',
+      'checkpoint:delete',
+      'challenge',
+      'checkpoint:create',
+      'history:0',
+      'native',
+      'checkpoint:proofReady',
+      'authorize',
+      'checkpoint:authorized',
+    ]);
+    expect(transport.receivedRecoveryToken?.value, newRecoveryToken.value);
+    expect(authorized.recoveryToken.value, newRecoveryToken.value);
+    expect(
+      checkpointPersistence.current?.recoveryToken.value,
+      newRecoveryToken.value,
+    );
+    expect(passphrase, everyElement(0));
+  });
+
+  test('过期 proofReady 发现服务端有效授权时保留事务再拒绝设备不一致', () async {
+    final fixture = _readyRecoveryFixture();
+    final callOrder = <String>[];
+    final proofReady = _expiredPreTransitionCheckpoint(
+      fixture.challenge,
+      E2eeAccountRecoveryCheckpointPhase.proofReady,
+      expectedDeviceId: _uuid(6),
+    );
+    final checkpointPersistence = _MemoryCheckpointPersistence(
+      callOrder,
+      initialCheckpoint: proofReady,
+    );
+    final authorizedFixture = (
+      challenge: proofReady.challenge,
+      historyPage: fixture.historyPage,
+    );
+    final passphrase = Uint8List.fromList(utf8.encode('correct horse battery'));
+    final authorizer = E2eeAccountRecoveryAuthorizer(
+      transport: _FakeRecoveryTransport(
+        challenge: fixture.challenge,
+        historyPages: <CloudSyncAccountSecurityHistoryPage>[
+          fixture.historyPage,
+        ],
+        callOrder: callOrder,
+        authorizedState: E2eeAccountRecoveryAuthorizedState(
+          attemptId: proofReady.attemptId,
+          authorizedAt: DateTime.utc(2026, 8, 1),
+          recoveryTokenExpiresAt: DateTime.utc(2026, 8, 1, 2),
+          status: E2eeAccountRecoveryRemoteStatus.authorized,
+          nextAction: E2eeAccountRecoveryNextAction.recoverReplace,
+          securityState: _securityStateForFixture(authorizedFixture),
+          dataState: proofReady.challenge.dataState,
+        ),
+      ),
+      proofCore: _FakeRecoveryProofCore(callOrder),
+      checkpointPersistence: checkpointPersistence,
+      serviceOriginSha256: _bytes(32, 0x61),
+      attemptIdFactory: () => throw StateError('已授权事务不得创建新 attempt'),
+      recoveryTokenFactory: () => throw StateError('已授权事务不得创建新恢复令牌'),
+      now: () => DateTime.utc(2026, 8, 1, 0, 30),
+    );
+
+    await expectLater(
+      authorizer.authorize(
+        onboardingToken: CloudSyncOnboardingToken.parse(
+          'kelivo_onboarding_${base64Url.encode(_bytes(32, 0x72)).replaceAll('=', '')}',
+        ),
+        expectedDeviceId: _uuid(5),
+        recoveryMedia: _bytes(676, 0x73),
+        recoveryPassphrase: passphrase,
+      ),
+      throwsFormatException,
+    );
+
+    expect(callOrder, <String>[
+      'checkpoint:read',
+      'state',
+      'checkpoint:authorized',
+    ]);
+    expect(
+      checkpointPersistence.current?.phase,
+      E2eeAccountRecoveryCheckpointPhase.authorized,
+    );
+    expect(checkpointPersistence.current?.expectedDeviceId, _uuid(6));
+    expect(passphrase, everyElement(0));
+  });
+
+  for (final phase in <E2eeAccountRecoveryCheckpointPhase>[
+    E2eeAccountRecoveryCheckpointPhase.challenged,
+    E2eeAccountRecoveryCheckpointPhase.proofReady,
+    E2eeAccountRecoveryCheckpointPhase.authorized,
+  ]) {
+    test('授权前 ${phase.name} checkpoint 过期时删除旧事务并重新授权', () async {
+      final fixture = _readyRecoveryFixture();
+      final callOrder = <String>[];
+      final checkpointPersistence = _MemoryCheckpointPersistence(
+        callOrder,
+        initialCheckpoint: _expiredPreTransitionCheckpoint(
+          fixture.challenge,
+          phase,
+          expectedDeviceId: _uuid(6),
+        ),
+      );
+      final transport = _FakeRecoveryTransport(
+        challenge: fixture.challenge,
+        historyPages: <CloudSyncAccountSecurityHistoryPage>[
+          fixture.historyPage,
+        ],
+        callOrder: callOrder,
+      );
+      final authorizer = E2eeAccountRecoveryAuthorizer(
+        transport: transport,
+        proofCore: _FakeRecoveryProofCore(callOrder),
+        checkpointPersistence: checkpointPersistence,
+        serviceOriginSha256: _bytes(32, 0x61),
+        attemptIdFactory: () => fixture.challenge.attemptId,
+        recoveryTokenFactory: () => CloudSyncAccountRecoveryToken.parse(
+          'kelivo_recovery_${base64Url.encode(_bytes(32, 0x75)).replaceAll('=', '')}',
+        ),
+        now: () => DateTime.utc(2026, 8, 1, 0, 30),
+      );
+
+      final authorized = await authorizer.authorize(
+        onboardingToken: CloudSyncOnboardingToken.parse(
+          'kelivo_onboarding_${base64Url.encode(_bytes(32, 0x72)).replaceAll('=', '')}',
+        ),
+        expectedDeviceId: _uuid(5),
+        recoveryMedia: _bytes(676, 0x73),
+        recoveryPassphrase: Uint8List.fromList(
+          utf8.encode('correct horse battery'),
+        ),
+      );
+
+      expect(callOrder, <String>[
+        'checkpoint:read',
+        if (phase == E2eeAccountRecoveryCheckpointPhase.proofReady) 'state',
+        'checkpoint:delete',
+        'challenge',
+        'checkpoint:create',
+        'history:0',
+        'native',
+        'checkpoint:proofReady',
+        'authorize',
+        'checkpoint:authorized',
+      ]);
+      expect(authorized.attemptId, fixture.challenge.attemptId);
+      expect(
+        checkpointPersistence.current?.attemptId,
+        fixture.challenge.attemptId,
+      );
+      expect(
+        checkpointPersistence.current?.phase,
+        E2eeAccountRecoveryCheckpointPhase.authorized,
+      );
+    });
+  }
+
+  test('未过期 checkpoint 目标设备不一致时不触网也不删除', () async {
+    final fixture = _readyRecoveryFixture();
+    final callOrder = <String>[];
+    final checkpointPersistence = _MemoryCheckpointPersistence(
+      callOrder,
+      initialCheckpoint:
+          E2eeAccountRecoveryCheckpoint.challenged(
+            expectedDeviceId: _uuid(6),
+            recoveryToken: CloudSyncAccountRecoveryToken.generate(),
+            challenge: fixture.challenge,
+          ).withProof(
+            nonceProof: _bytes(32, 0x81),
+            trustSignature: _bytes(64, 0x82),
+          ),
+    );
+    final passphrase = Uint8List.fromList(utf8.encode('correct horse battery'));
+    final authorizer = E2eeAccountRecoveryAuthorizer(
+      transport: _FakeRecoveryTransport(
+        challenge: fixture.challenge,
+        historyPages: <CloudSyncAccountSecurityHistoryPage>[
+          fixture.historyPage,
+        ],
+        callOrder: callOrder,
+      ),
+      proofCore: _FakeRecoveryProofCore(callOrder),
+      checkpointPersistence: checkpointPersistence,
+      serviceOriginSha256: _bytes(32, 0x61),
+      attemptIdFactory: () => throw StateError('设备不一致时不应创建新 attempt'),
+      recoveryTokenFactory: () => throw StateError('设备不一致时不应创建新恢复令牌'),
+      now: () => DateTime.utc(2026, 8, 1, 0, 30),
+    );
+
+    await expectLater(
+      authorizer.authorize(
+        onboardingToken: CloudSyncOnboardingToken.parse(
+          'kelivo_onboarding_${base64Url.encode(_bytes(32, 0x72)).replaceAll('=', '')}',
+        ),
+        expectedDeviceId: _uuid(5),
+        recoveryMedia: _bytes(676, 0x73),
+        recoveryPassphrase: passphrase,
+      ),
+      throwsFormatException,
+    );
+
+    expect(callOrder, <String>['checkpoint:read']);
+    expect(
+      checkpointPersistence.current?.attemptId,
+      fixture.challenge.attemptId,
+    );
+    expect(passphrase, everyElement(0));
+  });
+
+  test('过期 checkpoint 删除发生 CAS 竞争时不创建新恢复事务', () async {
+    final fixture = _readyRecoveryFixture();
+    final callOrder = <String>[];
+    final expired = _expiredPreTransitionCheckpoint(
+      fixture.challenge,
+      E2eeAccountRecoveryCheckpointPhase.authorized,
+    );
+    final checkpointPersistence = _MemoryCheckpointPersistence(
+      callOrder,
+      initialCheckpoint: expired,
+      deleteSucceeds: false,
+    );
+    final passphrase = Uint8List.fromList(utf8.encode('correct horse battery'));
+    final authorizer = E2eeAccountRecoveryAuthorizer(
+      transport: _FakeRecoveryTransport(
+        challenge: fixture.challenge,
+        historyPages: <CloudSyncAccountSecurityHistoryPage>[
+          fixture.historyPage,
+        ],
+        callOrder: callOrder,
+      ),
+      proofCore: _FakeRecoveryProofCore(callOrder),
+      checkpointPersistence: checkpointPersistence,
+      serviceOriginSha256: _bytes(32, 0x61),
+      attemptIdFactory: () => throw StateError('CAS 竞争后不应创建新 attempt'),
+      recoveryTokenFactory: () => throw StateError('CAS 竞争后不应创建新恢复令牌'),
+      now: () => DateTime.utc(2026, 8, 1, 0, 30),
+    );
+
+    await expectLater(
+      authorizer.authorize(
+        onboardingToken: CloudSyncOnboardingToken.parse(
+          'kelivo_onboarding_${base64Url.encode(_bytes(32, 0x72)).replaceAll('=', '')}',
+        ),
+        expectedDeviceId: _uuid(5),
+        recoveryMedia: _bytes(676, 0x73),
+        recoveryPassphrase: passphrase,
+      ),
+      throwsStateError,
+    );
+
+    expect(callOrder, <String>['checkpoint:read', 'checkpoint:delete']);
+    expect(checkpointPersistence.current?.attemptId, expired.attemptId);
+    expect(passphrase, everyElement(0));
+  });
+
   test('成员提交协调器只发送已持久化 replacement 并先落回执', () async {
     final callOrder = <String>[];
     final prepared = _preparedReplacementCheckpoint();
@@ -1044,6 +1353,51 @@ _readyRecoveryFixture() {
   );
 }
 
+E2eeAccountRecoveryCheckpoint _expiredPreTransitionCheckpoint(
+  E2eeAccountRecoveryChallenge current,
+  E2eeAccountRecoveryCheckpointPhase phase, {
+  String? expectedDeviceId,
+}) {
+  final expiredChallenge = E2eeAccountRecoveryChallenge(
+    attemptId: _uuid(9),
+    requestDigest: current.requestDigest,
+    challengeFrame: current.challengeFrame,
+    sealedNonce: current.sealedNonce,
+    securityGeneration: current.securityGeneration,
+    keyEpoch: current.keyEpoch,
+    membershipManifestDigest: current.membershipManifestDigest,
+    recoveryPublicKeyVersion: current.recoveryPublicKeyVersion,
+    recoveryPublicKey: current.recoveryPublicKey,
+    recoveryCapsuleVersion: current.recoveryCapsuleVersion,
+    recoveryCapsule: current.recoveryCapsule,
+    recoveryCapsuleDigest: current.recoveryCapsuleDigest,
+    dataState: current.dataState,
+    expiresAt: DateTime.utc(2026, 8, 1, 0, 10),
+  );
+  final challenged = E2eeAccountRecoveryCheckpoint.challenged(
+    expectedDeviceId: expectedDeviceId ?? _uuid(5),
+    recoveryToken: CloudSyncAccountRecoveryToken.generate(),
+    challenge: expiredChallenge,
+  );
+  if (phase == E2eeAccountRecoveryCheckpointPhase.challenged) {
+    return challenged;
+  }
+  final proofReady = challenged.withProof(
+    nonceProof: _bytes(32, 0x81),
+    trustSignature: _bytes(64, 0x82),
+  );
+  if (phase == E2eeAccountRecoveryCheckpointPhase.proofReady) {
+    return proofReady;
+  }
+  if (phase != E2eeAccountRecoveryCheckpointPhase.authorized) {
+    throw StateError('测试仅支持恢复迁移前阶段');
+  }
+  return proofReady.authorized(
+    recoveryTokenExpiresAt: DateTime.utc(2026, 8, 1, 0, 20),
+    nextAction: E2eeAccountRecoveryNextAction.recoverReplace,
+  );
+}
+
 CloudSyncAccountSecurityState _securityStateForFixture(
   ({
     E2eeAccountRecoveryChallenge challenge,
@@ -1397,6 +1751,7 @@ final class _MemoryCheckpointPersistence
     this.callOrder, {
     E2eeAccountRecoveryCheckpoint? initialCheckpoint,
     this.concurrentAdvanceCheckpoint,
+    this.deleteSucceeds = true,
   }) : _snapshot = initialCheckpoint == null
            ? null
            : E2eeAccountRecoveryCheckpointSnapshot(
@@ -1406,6 +1761,7 @@ final class _MemoryCheckpointPersistence
 
   final List<String> callOrder;
   final E2eeAccountRecoveryCheckpoint? concurrentAdvanceCheckpoint;
+  final bool deleteSucceeds;
   E2eeAccountRecoveryCheckpointSnapshot? _snapshot;
 
   E2eeAccountRecoveryCheckpoint? get current => _snapshot?.checkpoint;
@@ -1461,6 +1817,8 @@ final class _MemoryCheckpointPersistence
 
   @override
   Future<bool> delete(E2eeAccountRecoveryCheckpointSnapshot snapshot) async {
+    callOrder.add('checkpoint:delete');
+    if (!deleteSucceeds) return false;
     _snapshot?.clearSensitiveState();
     _snapshot = null;
     return true;

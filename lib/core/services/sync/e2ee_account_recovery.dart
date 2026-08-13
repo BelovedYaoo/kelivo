@@ -2341,6 +2341,20 @@ E2eeAccountRecoveryCheckpointAuthorization? _checkpointAuthorization(
   E2eeAccountRecoveryProofReadyProgress() => null,
 };
 
+bool _preTransitionCheckpointExpired(
+  E2eeAccountRecoveryCheckpoint checkpoint,
+  DateTime now,
+) => switch (checkpoint.progress) {
+  E2eeAccountRecoveryChallengedProgress() ||
+  E2eeAccountRecoveryProofReadyProgress() => !now.isBefore(
+    checkpoint.challenge.expiresAt,
+  ),
+  E2eeAccountRecoveryAuthorizedProgress(:final authorization) => !now.isBefore(
+    authorization.recoveryTokenExpiresAt,
+  ),
+  _ => false,
+};
+
 E2eeAccountRecoveryCommitReceipt? _checkpointCommitReceipt(
   E2eeAccountRecoveryCheckpointProgress progress,
 ) => switch (progress) {
@@ -3243,11 +3257,69 @@ final class E2eeAccountRecoveryAuthorizer {
     try {
       checkpointSnapshot = await _checkpointPersistence.read();
       var checkpoint = checkpointSnapshot?.checkpoint;
-      if (checkpoint != null && checkpoint.expectedDeviceId != deviceId) {
+      final now = _now().toUtc();
+      final checkpointDeviceMatches =
+          checkpoint == null || checkpoint.expectedDeviceId == deviceId;
+      final checkpointExpired =
+          checkpoint != null &&
+          _preTransitionCheckpointExpired(checkpoint, now);
+      if (!checkpointDeviceMatches && !checkpointExpired) {
         throw const FormatException('账户恢复 checkpoint 目标设备不一致');
       }
 
-      final now = _now().toUtc();
+      var recoveredAuthorizationExpired = false;
+      final proofReadyCheckpoint = checkpoint;
+      if (proofReadyCheckpoint != null &&
+          proofReadyCheckpoint.progress
+              is E2eeAccountRecoveryProofReadyProgress) {
+        E2eeAccountRecoveryAuthorizedState? authorizedState;
+        try {
+          authorizedState = await _transport.getAuthorizedState(
+            recoveryToken: proofReadyCheckpoint.recoveryToken,
+          );
+        } on E2eeAccountRecoveryTokenUnavailable {
+          authorizedState = null;
+        }
+        if (authorizedState != null) {
+          _validateAuthorizedState(
+            proofReadyCheckpoint.challenge,
+            authorizedState,
+          );
+          if (now.isBefore(authorizedState.recoveryTokenExpiresAt)) {
+            final proofReadySnapshot = checkpointSnapshot;
+            if (proofReadySnapshot == null) {
+              throw StateError('账户恢复 checkpoint 快照缺失');
+            }
+            checkpointSnapshot = await _checkpointPersistence.advance(
+              expectedEnvelopeDigest: proofReadySnapshot.envelopeDigest,
+              checkpoint: proofReadyCheckpoint.authorized(
+                recoveryTokenExpiresAt: authorizedState.recoveryTokenExpiresAt,
+                nextAction: authorizedState.nextAction,
+              ),
+            );
+            checkpoint = checkpointSnapshot.checkpoint;
+          } else {
+            recoveredAuthorizationExpired = true;
+          }
+        }
+      }
+      if (checkpoint != null &&
+          (recoveredAuthorizationExpired ||
+              _preTransitionCheckpointExpired(checkpoint, now))) {
+        final expiredSnapshot = checkpointSnapshot;
+        if (expiredSnapshot == null) {
+          throw StateError('账户恢复 checkpoint 快照缺失');
+        }
+        if (!await _checkpointPersistence.delete(expiredSnapshot)) {
+          throw StateError('账户恢复过期 checkpoint 已被并发推进');
+        }
+        expiredSnapshot.clearSensitiveState();
+        checkpointSnapshot = null;
+        checkpoint = null;
+      }
+      if (checkpoint != null && !checkpointDeviceMatches) {
+        throw const FormatException('账户恢复 checkpoint 目标设备不一致');
+      }
       if (checkpoint == null) {
         final attemptId = _canonicalUuid(_attemptIdFactory(), 'attemptId');
         final challenge = await _transport.createChallenge(
@@ -3267,33 +3339,6 @@ final class E2eeAccountRecoveryAuthorizer {
         );
         checkpointSnapshot = await _checkpointPersistence.create(checkpoint);
         checkpoint = checkpointSnapshot.checkpoint;
-      } else if (checkpoint.progress is E2eeAccountRecoveryProofReadyProgress) {
-        E2eeAccountRecoveryAuthorizedState? authorizedState;
-        try {
-          authorizedState = await _transport.getAuthorizedState(
-            recoveryToken: checkpoint.recoveryToken,
-          );
-        } on E2eeAccountRecoveryTokenUnavailable {
-          authorizedState = null;
-        }
-        if (authorizedState != null) {
-          _validateAuthorizedState(checkpoint.challenge, authorizedState);
-          if (!now.isBefore(authorizedState.recoveryTokenExpiresAt)) {
-            throw const E2eeAccountRecoveryExpired();
-          }
-          final proofReadySnapshot = checkpointSnapshot;
-          if (proofReadySnapshot == null) {
-            throw StateError('账户恢复 checkpoint 快照缺失');
-          }
-          checkpointSnapshot = await _checkpointPersistence.advance(
-            expectedEnvelopeDigest: proofReadySnapshot.envelopeDigest,
-            checkpoint: checkpoint.authorized(
-              recoveryTokenExpiresAt: authorizedState.recoveryTokenExpiresAt,
-              nextAction: authorizedState.nextAction,
-            ),
-          );
-          checkpoint = checkpointSnapshot.checkpoint;
-        }
       }
       final durableAuthorization = _checkpointAuthorization(
         checkpoint.progress,
