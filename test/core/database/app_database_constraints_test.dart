@@ -11086,8 +11086,9 @@ final class _ZeroSourceDataRekeyCryptography
 
   @override
   Future<E2eeDataRekeyRewrappedRecord> rewrapRecord(
-    CloudSyncDataRekeySourceRecord source,
-  ) => throw StateError('空源测试不得重包记录');
+    CloudSyncDataRekeySourceRecord source, {
+    required String targetOperationId,
+  }) => throw StateError('空源测试不得重包记录');
 
   @override
   Future<E2eeDataRekeyRewrappedAttachmentManifest> rewrapAttachmentManifest(
@@ -11293,8 +11294,9 @@ final class _RecordDataRekeyCryptography implements E2eeDataRekeyCryptography {
 
   @override
   Future<E2eeDataRekeyRewrappedRecord> rewrapRecord(
-    CloudSyncDataRekeySourceRecord source,
-  ) async {
+    CloudSyncDataRekeySourceRecord source, {
+    required String targetOperationId,
+  }) async {
     recordRewrapCount += 1;
     return E2eeDataRekeyRewrappedRecord(
       sourceRecordId: source.recordId,
@@ -11482,8 +11484,9 @@ final class _AttachmentDataRekeyCryptography
 
   @override
   Future<E2eeDataRekeyRewrappedRecord> rewrapRecord(
-    CloudSyncDataRekeySourceRecord source,
-  ) => throw StateError('附件换代测试不得重包记录');
+    CloudSyncDataRekeySourceRecord source, {
+    required String targetOperationId,
+  }) => throw StateError('附件换代测试不得重包记录');
 
   @override
   Future<E2eeDataRekeyRewrappedAttachmentManifest> rewrapAttachmentManifest(

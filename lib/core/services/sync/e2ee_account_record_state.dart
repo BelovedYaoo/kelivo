@@ -156,6 +156,51 @@ final class E2eeAccountRecordStateCodec {
     );
   }
 
+  Future<E2eeSealedAccountRecordState> reseedForDataRekey({
+    required E2eeUntrustedAccountRecordEnvelope source,
+    required String operationId,
+    required String claimedWriterDeviceId,
+    required int claimedWriterKeyVersion,
+  }) async {
+    if (source.keyEpoch == 0xffffffff ||
+        currentKeyEpoch != source.keyEpoch + 1) {
+      throw const FormatException('账户记录换代只允许相邻密钥世代');
+    }
+    ({
+      SyncEntityKey entityKey,
+      E2eeAccountRecordStateKind kind,
+      Uint8List payload,
+    })?
+    opened;
+    try {
+      opened = await _recordCipher.openVerified(
+        source,
+        decode: (_, entityKey, borrowedStateFrame) {
+          final decoded = _decodeStateFrame(borrowedStateFrame);
+          return (
+            entityKey: entityKey,
+            kind: decoded.kind,
+            payload: Uint8List.fromList(decoded.payload),
+          );
+        },
+      );
+      final state = opened!;
+      // finalize 会删除源数据代历史；目标代必须从独立 genesis 起链。
+      return await _seal(
+        entityKey: state.entityKey,
+        kind: state.kind,
+        logicalVersion: 1,
+        parentDigests: const <E2eeAccountRecordStateDigest>[],
+        operationId: operationId,
+        claimedWriterDeviceId: claimedWriterDeviceId,
+        claimedWriterKeyVersion: claimedWriterKeyVersion,
+        payload: state.payload,
+      );
+    } finally {
+      _clearBytes(opened?.payload);
+    }
+  }
+
   Future<T> open<T>(
     E2eeUntrustedAccountRecordEnvelope record, {
     required T Function(

@@ -118,8 +118,9 @@ abstract interface class E2eeDataRekeyCryptography {
   int get targetKeyEpoch;
 
   Future<E2eeDataRekeyRewrappedRecord> rewrapRecord(
-    CloudSyncDataRekeySourceRecord source,
-  );
+    CloudSyncDataRekeySourceRecord source, {
+    required String targetOperationId,
+  });
 
   Future<E2eeDataRekeyRewrappedAttachmentManifest> rewrapAttachmentManifest(
     CloudSyncDataRekeySourceAttachment source,
@@ -691,7 +692,10 @@ final class E2eeDataRekeyExecutor {
       _requireRecordRequestMatches(restored, source, journalState);
       pending = restored;
     } else {
-      final rewrapped = await _cryptography.rewrapRecord(source);
+      final rewrapped = await _cryptography.rewrapRecord(
+        source,
+        targetOperationId: artifactId,
+      );
       _requireRewrappedRecordMatches(rewrapped, source, binding);
       pending = E2eeDataRekeyPendingRecordArtifact(
         binding: artifactBinding,

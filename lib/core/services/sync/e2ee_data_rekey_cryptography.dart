@@ -6,6 +6,7 @@ import 'package:uuid/uuid.dart';
 
 import 'cloud_sync_types.dart';
 import 'e2ee_account_record_cipher.dart';
+import 'e2ee_account_record_state.dart';
 import 'e2ee_attachment_crypto_session.dart';
 import 'e2ee_data_rekey_executor.dart';
 import 'e2ee_device_state_access.dart';
@@ -28,6 +29,7 @@ final class E2eeDataRekeyCryptographySession
       targetRecordCipher,
       targetAttachmentCryptography,
       Uuid.unparse(issuerState.binding.deviceId),
+      issuerState.binding.keyVersion,
       targetRecordCipher.currentKeyEpoch,
     );
   }
@@ -38,6 +40,7 @@ final class E2eeDataRekeyCryptographySession
     this._targetRecordCipher,
     this._targetAttachmentCryptography,
     this.issuerDeviceId,
+    this._issuerDeviceKeyVersion,
     this.targetKeyEpoch,
   );
 
@@ -45,9 +48,12 @@ final class E2eeDataRekeyCryptographySession
   final KelivoDeviceIdentityHandle _issuerIdentity;
   final E2eeAccountRecordCipher _targetRecordCipher;
   final E2eeAttachmentCrypto _targetAttachmentCryptography;
+  final int _issuerDeviceKeyVersion;
+  late final E2eeAccountRecordStateCodec _targetRecordStateCodec =
+      E2eeAccountRecordStateCodec.takeOwnership(_targetRecordCipher);
 
-  bool _targetRecordCipherClosed = false;
   bool _targetAttachmentCryptographyClosed = false;
+  bool _targetRecordStateCodecClosed = false;
   Future<void>? _closeFuture;
 
   @override
@@ -148,22 +154,26 @@ final class E2eeDataRekeyCryptographySession
 
   @override
   Future<E2eeDataRekeyRewrappedRecord> rewrapRecord(
-    CloudSyncDataRekeySourceRecord source,
-  ) async {
-    final sealed = await _targetRecordCipher.rewrap(
-      E2eeUntrustedAccountRecordEnvelope.fromTransport(
+    CloudSyncDataRekeySourceRecord source, {
+    required String targetOperationId,
+  }) async {
+    final sealed = await _targetRecordStateCodec.reseedForDataRekey(
+      source: E2eeUntrustedAccountRecordEnvelope.fromTransport(
         recordId: E2eeUntrustedAccountRecordId.fromTransport(source.recordId),
         envelopeVersion: source.envelopeVersion,
         keyEpoch: source.keyEpoch,
         ciphertext: source.ciphertext,
       ),
+      operationId: targetOperationId,
+      claimedWriterDeviceId: issuerDeviceId,
+      claimedWriterKeyVersion: _issuerDeviceKeyVersion,
     );
     return E2eeDataRekeyRewrappedRecord(
       sourceRecordId: source.recordId,
       sourceRevision: source.revision,
-      targetRecordId: sealed.recordId.wireValue,
-      targetKeyEpoch: sealed.keyEpoch,
-      ciphertext: sealed.ciphertext,
+      targetRecordId: sealed.record.recordId.wireValue,
+      targetKeyEpoch: sealed.record.keyEpoch,
+      ciphertext: sealed.record.ciphertext,
     );
   }
 
@@ -225,10 +235,10 @@ final class E2eeDataRekeyCryptographySession
         firstStackTrace = stackTrace;
       }
     }
-    if (!_targetRecordCipherClosed) {
+    if (!_targetRecordStateCodecClosed) {
       try {
-        await _targetRecordCipher.close();
-        _targetRecordCipherClosed = true;
+        await _targetRecordStateCodec.close();
+        _targetRecordStateCodecClosed = true;
       } catch (error, stackTrace) {
         if (firstError == null) {
           firstError = error;

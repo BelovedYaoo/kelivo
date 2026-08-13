@@ -479,6 +479,120 @@ void main() {
     expect(opened.payload, orderedEquals(payload));
   });
 
+  test('数据换代仅将相邻且认证的历史状态重建为目标世代独立 genesis', () async {
+    const core = KelivoSecureCore();
+    if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
+
+    KelivoAccountRootKeyHandle? sourceArk = await core.generateAccountRootKey(
+      userId: _rawStateUuid(_stateTestUserId),
+      keyEpoch: 6,
+    );
+    final targetArkSource = await core.generateAccountRootKey(
+      userId: _rawStateUuid(_stateTestUserId),
+      keyEpoch: 7,
+    );
+    try {
+      await core.addAccountRootKeyEpoch(sourceArk, source: targetArkSource);
+    } finally {
+      await core.closeAccountRootKey(targetArkSource);
+    }
+    final random = Random.secure();
+    final slot = await core.createSlot(
+      Uint8List.fromList(List<int>.generate(16, (_) => random.nextInt(256))),
+    );
+    addTearDown(() => core.close(slot));
+    final identity = await core.generateDeviceIdentity();
+    addTearDown(() => core.closeDeviceIdentity(identity));
+    final stateBlob = await core.sealDeviceState(
+      slot,
+      identity,
+      deviceId: _rawStateUuid(_stateTestWriterDeviceId),
+      keyVersion: 1,
+      ark: sourceArk,
+      account: KelivoDeviceStateAccountBinding(
+        userId: _rawStateUuid(_stateTestUserId),
+        keyEpoch: 7,
+      ),
+    );
+    final reopened = await core.openDeviceState(slot, stateBlob: stateBlob);
+    addTearDown(() => core.closeDeviceIdentity(reopened.identity));
+    final targetArk = reopened.ark!;
+
+    final sourceCodec = E2eeAccountRecordStateCodec.takeOwnership(
+      E2eeAccountRecordCipher.takeOwnership(
+        secureCore: core,
+        accountRootKey: sourceArk,
+        userId: _stateTestUserId,
+        currentKeyEpoch: 6,
+      ),
+    );
+    sourceArk = null;
+    addTearDown(sourceCodec.close);
+    final payload = Uint8List.fromList(<int>[6, 7, 8]);
+    final source = await sourceCodec.sealValue(
+      entityKey: _stateTestEntityKey,
+      logicalVersion: 2,
+      parentDigests: <E2eeAccountRecordStateDigest>[
+        E2eeAccountRecordStateDigest.fromTrustedStorage(Uint8List(32)..[0] = 1),
+      ],
+      operationId: _stateTestOperationId1,
+      claimedWriterDeviceId: _stateTestWriterDeviceId,
+      claimedWriterKeyVersion: 1,
+      payload: payload,
+    );
+
+    final targetCodec = E2eeAccountRecordStateCodec.takeOwnership(
+      E2eeAccountRecordCipher.takeOwnership(
+        secureCore: core,
+        accountRootKey: targetArk,
+        userId: _stateTestUserId,
+        currentKeyEpoch: 7,
+      ),
+    );
+    addTearDown(targetCodec.close);
+    await expectLater(
+      targetCodec.reseedForDataRekey(
+        source: _untrustedStateRecord(source, keyEpoch: 5),
+        operationId: _stateTestOperationId3,
+        claimedWriterDeviceId: _stateTestWriterDeviceId,
+        claimedWriterKeyVersion: 2,
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    final tamperedCiphertext = Uint8List.fromList(source.record.ciphertext);
+    tamperedCiphertext[tamperedCiphertext.length - 1] ^= 1;
+    await expectLater(
+      targetCodec.reseedForDataRekey(
+        source: _untrustedStateRecord(source, ciphertext: tamperedCiphertext),
+        operationId: _stateTestOperationId4,
+        claimedWriterDeviceId: _stateTestWriterDeviceId,
+        claimedWriterKeyVersion: 2,
+      ),
+      throwsA(isA<KelivoSecureCoreException>()),
+    );
+    final reseeded = await targetCodec.reseedForDataRekey(
+      source: _untrustedStateRecord(source),
+      operationId: _stateTestOperationId2,
+      claimedWriterDeviceId: _stateTestWriterDeviceId,
+      claimedWriterKeyVersion: 2,
+    );
+    final opened = await targetCodec.open(
+      _untrustedStateRecord(reseeded),
+      decode: (state, borrowedPayload) =>
+          (state: state, payload: Uint8List.fromList(borrowedPayload)),
+    );
+
+    expect(reseeded.record.keyEpoch, 7);
+    expect(reseeded.record.recordId, isNot(source.record.recordId));
+    expect(opened.state.entityKey, _stateTestEntityKey);
+    expect(opened.state.kind, E2eeAccountRecordStateKind.value);
+    expect(opened.state.logicalVersion, 1);
+    expect(opened.state.parentDigests, isEmpty);
+    expect(opened.state.operationId, _stateTestOperationId2);
+    expect(opened.state.claimedWriterKeyVersion, 2);
+    expect(opened.payload, orderedEquals(payload));
+  });
+
   test('认证记录状态重建发送态拒绝摘要与信封篡改', () async {
     final codec = await _createStateCodec();
     addTearDown(codec.close);
